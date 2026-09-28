@@ -1,0 +1,21 @@
+[Unit]
+Description=Terminal Soliloquy fullscreen artwork
+After=graphical-session.target
+
+[Service]
+Type=simple
+Environment=AUTO_RESTART_DELAY=30
+Environment=SHOW_DIAGNOSTICS=true
+Environment=LLM_MODE=simulated
+Environment=LLM_MEMORY_LIMIT_MB=384
+WorkingDirectory=%h/terminal-soliloquy
+ExecStart=/usr/bin/foot --config=%h/terminal-soliloquy/config/foot.ini --fullscreen %h/terminal-soliloquy/.venv/bin/python %h/terminal-soliloquy/src/supervisor.py
+Restart=no
+MemoryHigh=448M
+MemoryMax=512M
+OOMPolicy=continue
+KillMode=control-group
+TimeoutStopSec=5
+
+[Install]
+WantedBy=graphical-session.target
