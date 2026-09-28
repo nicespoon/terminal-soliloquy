@@ -149,7 +149,6 @@ def _stream_llama_cli_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]
         prompt,
         "--no-display-prompt",
         "--simple-io",
-        "--no-conversation",
     ]
     try:
         process = subprocess.Popen(
