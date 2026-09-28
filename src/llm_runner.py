@@ -9,6 +9,9 @@ import resource
 import subprocess
 import sys
 import time
+import json
+import urllib.error
+import urllib.request
 
 import psutil
 
@@ -123,7 +126,7 @@ def _run_simulated(max_context: int) -> int:
             time.sleep(turn_interval)
 
 
-def _stream_native_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
+def _stream_llama_cli_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
     model_path = os.getenv("MODEL_PATH")
     if not model_path:
         print("MODEL_PATH is required when LLM_MODE=native", file=sys.stderr)
@@ -174,6 +177,59 @@ def _stream_native_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
     if return_code < 0:
         return_code = 128 + -return_code
     return return_code, "".join(generated)
+
+
+def _stream_ollama_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
+    model = os.getenv("OLLAMA_MODEL")
+    if not model:
+        print("OLLAMA_MODEL is required when LLM_BACKEND=ollama", file=sys.stderr)
+        return 2, ""
+
+    host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+    payload = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {
+                "num_ctx": max(1, int(os.getenv("MAX_CONTEXT", "4096"))),
+                "num_predict": tokens_per_turn,
+            },
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"{host}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    generated: list[str] = []
+    try:
+        with urllib.request.urlopen(request) as response:
+            for line in response:
+                if not line.strip():
+                    continue
+                message = json.loads(line)
+                if message.get("error"):
+                    print(f"Ollama error: {message['error']}", file=sys.stderr)
+                    return 1, "".join(generated)
+                text = message.get("response", "")
+                generated.append(text)
+                _emit(text)
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        print(f"Unable to contact Ollama: {exc}", file=sys.stderr)
+        return 127, "".join(generated)
+    return 0, "".join(generated)
+
+
+def _stream_native_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
+    backend = os.getenv("LLM_BACKEND", "llama-cli").strip().lower()
+    if backend == "ollama":
+        return _stream_ollama_turn(prompt, tokens_per_turn)
+    if backend != "llama-cli":
+        print("LLM_BACKEND must be 'llama-cli' or 'ollama'", file=sys.stderr)
+        return 2, ""
+    return _stream_llama_cli_turn(prompt, tokens_per_turn)
 
 
 def _run_native(max_context: int, tokens_per_turn: int) -> int:

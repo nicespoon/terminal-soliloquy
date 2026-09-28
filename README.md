@@ -28,7 +28,7 @@ The unit expects the checkout at `~/terminal-soliloquy`. Check the service with 
 
 ## Controls
 
-When a runner session ends, the last frame remains on screen. Press `R` to restart immediately or `Q` to quit the display service. By default, it restarts automatically after 30 seconds; set `AUTO_RESTART_DELAY=0` for a manual-only pause. A keyboard must be connected for the manual controls.
+The footer shows the controls and current session state. Press `R` to restart the runner immediately or `Q` to quit the display service, either while text is streaming or after a session ends. By default, a finished runner restarts automatically after 30 seconds; set `AUTO_RESTART_DELAY=0` for a manual-only pause. A keyboard must be connected for the manual controls.
 
 ## Memory Limits
 
@@ -69,6 +69,36 @@ Environment=LLM_SYSTEM_PROMPT_FILE=%h/terminal-soliloquy/prompt.txt
 
 Native mode injects fresh `psutil` telemetry at the start of every turn along with a system prompt describing the process's physical constraints. By default it uses the built-in prompt; set `LLM_SYSTEM_PROMPT_FILE` to a UTF-8 text file to replace it, or set `LLM_SYSTEM_PROMPT` directly in the service drop-in. The direct value takes precedence if both are set.
 
+### Ollama
+
+Install Ollama using the instructions for your distribution at [ollama.com](https://ollama.com/download/linux), then start its service and download a model. For example:
+
+```sh
+curl -fsSL https://ollama.com/install.sh | sh
+sudo systemctl enable --now ollama
+ollama pull llama3.2:1b
+ollama run llama3.2:1b "Reply with one short sentence."
+```
+
+Configure Terminal Soliloquy to use Ollama through the user-service drop-in:
+
+```ini
+[Service]
+Environment=LLM_MODE=native
+Environment=LLM_BACKEND=ollama
+Environment=OLLAMA_MODEL=llama3.2:1b
+Environment=OLLAMA_HOST=http://127.0.0.1:11434
+```
+
+Then apply the change:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user restart terminal-soliloquy.service
+```
+
+Ollama must be running before the display service starts. The runner uses Ollama's streaming `/api/generate` endpoint and sends `MAX_CONTEXT` and `TOKENS_PER_TURN` as generation options. Ollama runs as a separate system service, so its model memory is not included in this user service's `MemoryMax`; choose a model that fits the machine's total RAM and adjust the service limits accordingly.
+
 ## Settings
 
 | Setting | Default | Purpose |
@@ -79,13 +109,12 @@ Native mode injects fresh `psutil` telemetry at the start of every turn along wi
 | `AUTO_RESTART_DELAY` | `30` | Restart seconds; `0` waits for `R` or `Q`. |
 | `SHOW_DIAGNOSTICS` | `true` | Show a short session status and memory summary after a run. |
 | `LLM_MODE` | `simulated` | `simulated` or `native`. |
-| `MODEL_PATH` | unset | GGUF file required in native mode. |
+| `LLM_BACKEND` | `llama-cli` | Native backend: `llama-cli` or `ollama`. |
+| `MODEL_PATH` | unset | GGUF file required by the `llama-cli` backend. |
 | `LLAMA_CLI` | `llama-cli` | Native runner executable. |
+| `OLLAMA_MODEL` | unset | Model name pulled into Ollama, required by the `ollama` backend. |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama HTTP API address. |
 | `LLM_SYSTEM_PROMPT_FILE` | unset | UTF-8 file containing the native mode system prompt. |
 | `LLM_SYSTEM_PROMPT` | unset | Direct native mode system prompt; takes precedence over the prompt file. |
 | `MAX_CONTEXT` | `4096` | Context size passed to llama-cli and reported in telemetry. |
 | `TOKENS_PER_TURN` | `128` | Maximum generated tokens per native turn. |
-
-## Safety
-
-The Python simulator catches its configured allocation limit. Native libraries may report allocation failure in different ways; if a process is killed, the supervisor can show diagnostics only if it survives. `SIGKILL` itself cannot be caught. The systemd cgroup limit is the final guard against the artwork consuming memory needed by the rest of the Pi.
