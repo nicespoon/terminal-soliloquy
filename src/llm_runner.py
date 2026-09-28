@@ -192,6 +192,12 @@ def _stream_llama_server_turn(
             "stream": True,
             "cache_prompt": True,
             "return_tokens": True,
+            "temperature": 0.8,
+            "min_p": 0.08,             # Filters out low-probability tail tokens dynamically
+            "repeat_penalty": 1.22,    # Punishes re-using exact tokens
+            "repeat_last_n": 256,      # Look-back distance for repetition penalty
+            "frequency_penalty": 0.4,  # Penalizes tokens based on overall count
+            "presence_penalty": 0.4,   # Penalizes tokens for appearing at all in history
         }
     ).encode("utf-8")
     request = urllib.request.Request(
