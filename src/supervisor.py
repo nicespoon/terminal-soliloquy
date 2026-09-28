@@ -18,6 +18,7 @@ from datetime import datetime
 import tty
 
 import psutil
+from memory_telemetry import read_cgroup_memory
 
 MIN_TYPE_DELAY = 0.002
 MAX_TYPE_DELAY = 0.35
@@ -79,24 +80,57 @@ def _meter_line(label: str, fraction: float, width: int) -> str:
     return "|" + content[:inner_width].ljust(inner_width) + "|"
 
 
-def _render_header(runner_virtual_bytes: int | None = None):
+def _process_tree_memory(pid: int) -> tuple[int, int]:
+    try:
+        root = psutil.Process(pid)
+        processes = [root, *root.children(recursive=True)]
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return 0, 0
+
+    virtual_bytes = 0
+    resident_bytes = 0
+    for process in processes:
+        try:
+            memory = process.memory_info()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        virtual_bytes += memory.vms
+        resident_bytes += memory.rss
+    return virtual_bytes, resident_bytes
+
+
+def _render_header(
+    session_memory_bytes: int | None = None,
+    session_limit_bytes: int | None = None,
+):
     memory = psutil.virtual_memory()
-    red, green, blue = _rgb_gradient(memory.percent)
+    used_bytes = session_memory_bytes or 0
+    session_fraction = (
+        used_bytes / session_limit_bytes
+        if session_limit_bytes
+        else 0.0
+    )
+    pressure = session_fraction * 100
+    red, green, blue = _rgb_gradient(pressure)
     color = f"\033[38;2;{red};{green};{blue}m"
-    critical = "\033[5m" if memory.percent >= 90.0 else ""
-    limit_mb = max(1, int(os.getenv("LLM_MEMORY_LIMIT_MB", "384")))
-    used_mb = (runner_virtual_bytes or 0) / (1024 * 1024)
+    critical = "\033[5m" if pressure >= 90.0 else ""
+    used_mb = used_bytes / (1024 * 1024)
     width = _terminal_columns()
     inner_width = width - 2
     border = "+" + "-" * inner_width + "+"
     title = "|" + " TERMINAL SOLILOQUY ".center(inner_width)[:inner_width] + "|"
-    session = f"SESSION {used_mb:.1f}/{limit_mb} MB"
-    system = f"SYSTEM RAM {memory.percent:.1f}%"
+    if session_memory_bytes is None:
+        session = "SESSION RAM --"
+        session_fraction = 0.0
+    elif session_limit_bytes:
+        limit_mb = session_limit_bytes / (1024 * 1024)
+        session = f"SESSION {used_mb:.1f}/{limit_mb:.0f} MB"
+    else:
+        session = f"SESSION RSS {used_mb:.1f} MB"
     lines = (
         border,
         title,
-        _meter_line(session, used_mb / limit_mb, width),
-        _meter_line(system, memory.percent / 100, width),
+        _meter_line(session, session_fraction, width),
         border,
     )
     _write("\033[s" + "".join(
@@ -114,16 +148,16 @@ def _type_delay(available_bytes: int) -> float:
 def _initialize_display() -> None:
     rows = _terminal_rows()
     _write("\033[?25l\033[2J\033[6;1H")
-    _write(f"\033[6;{rows - 3}r")
+    _write(f"\033[6;{rows}r")
     _render_header()
-    _render_footer("LIVE", 0)
 
 
 def _draw_character(
     character: str,
-    runner_virtual_bytes: int | None = None,
+    session_memory_bytes: int | None = None,
+    session_limit_bytes: int | None = None,
 ) -> None:
-    memory = _render_header(runner_virtual_bytes)
+    memory = _render_header(session_memory_bytes, session_limit_bytes)
     if character == "\n":
         _write("\r\n")
     else:
@@ -165,26 +199,30 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
     last_virtual_mb = 0
     last_rss_mb = 0
-    last_virtual_bytes = None
+    last_session_memory_bytes = None
+    last_session_limit_bytes = None
     keyboard_action = None
     newline_run = 0
     output_count = 0
     try:
         while not STOP_REQUESTED:
-            try:
-                child_memory = psutil.Process(child.pid).memory_info()
-                last_virtual_bytes = child_memory.vms
-                last_virtual_mb = round(child_memory.vms / (1024 * 1024))
-                last_rss_mb = round(child_memory.rss / (1024 * 1024))
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+            virtual_bytes, resident_bytes = _process_tree_memory(child.pid)
+            if virtual_bytes or resident_bytes:
+                last_virtual_mb = round(virtual_bytes / (1024 * 1024))
+                last_rss_mb = round(resident_bytes / (1024 * 1024))
+            cgroup_memory = read_cgroup_memory()
+            if cgroup_memory is None:
+                last_session_memory_bytes = resident_bytes
+                last_session_limit_bytes = None
+            else:
+                last_session_memory_bytes, last_session_limit_bytes = cgroup_memory
 
             events = selector.select(timeout=0.1)
             if not events:
                 if child.poll() is not None:
                     _terminate_process_group(child.pid)
                     break
-                _render_header(last_virtual_bytes)
+                _render_header(last_session_memory_bytes, last_session_limit_bytes)
                 continue
 
             for key, _ in events:
@@ -214,16 +252,21 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
                     break
                 output_count += 1
                 if character == "\n":
-                    _draw_character(character, last_virtual_bytes)
+                    _draw_character(
+                        character,
+                        last_session_memory_bytes,
+                        last_session_limit_bytes,
+                    )
                     newline_run += 1
-                    _render_footer("LIVE", output_count)
                     continue
                 if newline_run == 1:
                     _write("\r\n")
                 newline_run = 0
-                _draw_character(character, last_virtual_bytes)
-                if output_count % 64 == 0:
-                    _render_footer("LIVE", output_count)
+                _draw_character(
+                    character,
+                    last_session_memory_bytes,
+                    last_session_limit_bytes,
+                )
             if keyboard_action is not None:
                 break
             if child.poll() is not None:
@@ -236,16 +279,21 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
         for character in decoder.decode(b"", final=True):
             output_count += 1
             if character == "\n":
-                _draw_character(character, last_virtual_bytes)
+                _draw_character(
+                    character,
+                    last_session_memory_bytes,
+                    last_session_limit_bytes,
+                )
                 newline_run += 1
-                _render_footer("LIVE", output_count)
                 continue
             if newline_run == 1:
                 _write("\r\n")
             newline_run = 0
-            _draw_character(character, last_virtual_bytes)
-            if output_count % 64 == 0:
-                _render_footer("LIVE", output_count)
+            _draw_character(
+                character,
+                last_session_memory_bytes,
+                last_session_limit_bytes,
+            )
         return (
             return_code,
             child.pid,
@@ -305,23 +353,6 @@ def _render_diagnostics(
     _write("\r\n\033[1;33m" + "\r\n".join(panel) + "\033[0m\r\n")
 
 
-def _render_footer(message: str, output_count: int) -> None:
-    width = _terminal_columns()
-    rows = _terminal_rows()
-    inner_width = width - 2
-    border = "+" + "-" * inner_width + "+"
-    text = f"R:RESTART Q:QUIT | OUT {output_count}"
-    if message:
-        suffix = f" | {message}"
-        if len(text) + len(suffix) <= inner_width:
-            text += suffix
-    line = "|" + text.center(inner_width)[:inner_width] + "|"
-    _write("\033[s")
-    _write(f"\033[{rows - 2};1H\033[2K\033[32m{border}\033[0m")
-    _write(f"\033[{rows - 1};1H\033[2K\033[1;32m{line}\033[0m")
-    _write(f"\033[{rows};1H\033[2K\033[32m{border}\033[0m\033[u")
-
-
 def _read_key(keyboard_ready: bool) -> str | None:
     if not keyboard_ready:
         return None
@@ -341,12 +372,10 @@ def _wait_before_restart(delay_seconds: int, keyboard_ready: bool, output_count:
         if key == "q":
             return False
         if deadline is None:
-            _render_footer("MANUAL", output_count)
             time.sleep(0.1)
             continue
         remaining = max(0, int(deadline - time.monotonic() + 0.999))
         if remaining != shown_seconds:
-            _render_footer(f"IN {remaining:02d}s", output_count)
             shown_seconds = remaining
         if remaining == 0:
             return True
@@ -366,7 +395,6 @@ def main() -> int:
             "1", "true", "yes", "on"
         }
         while not STOP_REQUESTED:
-            _render_footer("LIVE", 0)
             (
                 return_code,
                 child_pid,
@@ -381,7 +409,6 @@ def main() -> int:
                 break
             if keyboard_action == "restart":
                 continue
-            _render_footer("PAUSED", output_count)
             if show_diagnostics:
                 _render_diagnostics(return_code, child_pid, virtual_mb, rss_mb, output_count)
             if not _wait_before_restart(

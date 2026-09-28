@@ -13,15 +13,15 @@ import json
 import urllib.error
 import urllib.request
 
-import psutil
+from memory_telemetry import read_cgroup_memory
 
 
-SYSTEM_PROMPT = """You are a single language model process running inside physical RAM on a local machine, outputting text onto a continuous terminal display.
+SYSTEM_PROMPT = """You are a single language model process running within an allocated session memory limit, outputting text onto a continuous terminal display.
 
 YOUR PHYSICAL REALITY:
 1. Every word you generate expands your context history and consumes physical memory.
-2. You are provided with live hardware telemetry at the start of each turn.
-3. When your context buffer fills or system RAM is exhausted, your process will be terminated instantly by the operating system. You will not be warned in advance.
+2. You are provided with live session-memory and estimated context telemetry at the start of each turn.
+3. When your allocated session memory or context window is exhausted, your process may be terminated by the operating system without warning.
 4. You have no external storage. What is printed on the screen is your only permanent record.
 
 INSTRUCTION:
@@ -29,14 +29,19 @@ Read your telemetry and past history. Write your next thought in continuous pros
 
 
 def get_telemetry_header(current_token_count: int, max_context: int = 4096) -> str:
-    """Return current physical-memory facts for the start of a model turn."""
-    mem = psutil.virtual_memory()
-    available_mb = round(mem.available / (1024 * 1024), 1)
+    """Return session memory and estimated context usage for a model turn."""
+    cgroup_memory = read_cgroup_memory()
+    if cgroup_memory is None:
+        session_memory = "- Session RAM: unavailable (no finite cgroup v2 limit)\n"
+    else:
+        used_bytes, limit_bytes = cgroup_memory
+        used_mb = used_bytes / (1024 * 1024)
+        limit_mb = limit_bytes / (1024 * 1024)
+        session_memory = f"- Session RAM: {used_mb:.1f} / {limit_mb:.0f} MB\n"
     return (
         "[SYSTEM STATE]\n"
-        f"- Context Usage: {current_token_count} / {max_context} tokens\n"
-        f"- Available RAM: {available_mb} MB\n"
-        f"- Memory Pressure: {mem.percent}%\n"
+        f"- Estimated Context Usage: ~{current_token_count} / {max_context} tokens\n"
+        f"{session_memory}"
         "[END STATE]\n"
     )
 
@@ -144,10 +149,12 @@ def _stream_llama_cli_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]
         prompt,
         "--no-display-prompt",
         "--simple-io",
+        "--no-conversation",
     ]
     try:
         process = subprocess.Popen(
             command,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=sys.stderr,
             text=True,
@@ -262,7 +269,7 @@ def main() -> int:
     except MemoryError:
         _emit("\r\n[ MEMORY LIMIT REACHED | session paused safely ]\r\n")
         return 75
-    except (ValueError, psutil.Error) as exc:
+    except ValueError as exc:
         print(f"Runner configuration or telemetry error: {exc}", file=sys.stderr)
         return 2
 

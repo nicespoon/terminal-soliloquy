@@ -55,21 +55,44 @@ MemoryMax=640M
 
 `LLM_MEMORY_LIMIT_MB` is a virtual address-space limit, not an exact resident-memory measurement. The systemd limits apply to the whole service, so leave room above the runner limit for `foot` and the supervisor. Choose a ceiling that leaves enough RAM for the operating system. Apply changes with `systemctl --user daemon-reload` and restart the service.
 
+The header and model prompt use the systemd cgroup's charged memory and `MemoryMax` when a finite cgroup v2 limit is available. Without a finite limit, the header falls back to runner-tree RSS without a host-memory comparison, and the prompt marks session RAM unavailable. The prompt's context count is an estimate, not an exact tokenizer count. An Ollama server runs outside the display service's cgroup and is not included.
+
+To optionally cap CPU usage, add a quota to the same service drop-in:
+
+```ini
+[Service]
+CPUQuota=200%
+```
+
+`CPUQuota=200%` allows the service to use up to the equivalent of two CPU cores. The quota applies to the service cgroup, including `foot`, the supervisor, and `llama-cli`; it does not limit Ollama when Ollama runs as a separate system service. A lower quota can reduce the impact on other applications, but may also slow model generation.
+
 ## Language Model
 
-The default `LLM_MODE=simulated` runs without model weights and uses bounded allocations to demonstrate the pause/restart flow. For a local GGUF model, install a compatible `llama-cli` build and configure a model path with `systemctl --user edit terminal-soliloquy.service`.
+The default `LLM_MODE=simulated` runs without model weights and uses bounded allocations to demonstrate the pause/restart flow. To use a model, choose a native backend below. Native mode injects fresh `psutil` telemetry at the start of every turn along with a system prompt describing the process's physical constraints. By default it uses the built-in prompt; set `LLM_SYSTEM_PROMPT_FILE` to a UTF-8 text file to replace it, or set `LLM_SYSTEM_PROMPT` directly in the service drop-in. The direct value takes precedence if both are set.
+
+### llama-cli (recommended)
+
+`llama-cli` is recommended for this memory-bounded service because its model process runs inside the service cgroup and is covered by the service's `MemoryMax`. Install a compatible `llama-cli` build and obtain a local GGUF model, then configure the user-service drop-in:
 
 ```ini
 [Service]
 Environment=LLM_MODE=native
+Environment=LLM_BACKEND=llama-cli
 Environment=MODEL_PATH=/path/to/model.gguf
 Environment=LLAMA_CLI=/usr/local/bin/llama-cli
 Environment=LLM_SYSTEM_PROMPT_FILE=%h/terminal-soliloquy/prompt.txt
 ```
 
-Native mode injects fresh `psutil` telemetry at the start of every turn along with a system prompt describing the process's physical constraints. By default it uses the built-in prompt; set `LLM_SYSTEM_PROMPT_FILE` to a UTF-8 text file to replace it, or set `LLM_SYSTEM_PROMPT` directly in the service drop-in. The direct value takes precedence if both are set.
+Then apply the change:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user restart terminal-soliloquy.service
+```
 
 ### Ollama
+
+Ollama is an alternative if you already use its model service. Its model memory is outside this user service's `MemoryMax`, so account for it separately when choosing a model, especially on memory-constrained systems.
 
 Install Ollama using the instructions for your distribution at [ollama.com](https://ollama.com/download/linux), then start its service and download a model. For example:
 
@@ -97,7 +120,7 @@ systemctl --user daemon-reload
 systemctl --user restart terminal-soliloquy.service
 ```
 
-Ollama must be running before the display service starts. The runner uses Ollama's streaming `/api/generate` endpoint and sends `MAX_CONTEXT` and `TOKENS_PER_TURN` as generation options. Ollama runs as a separate system service, so its model memory is not included in this user service's `MemoryMax`; choose a model that fits the machine's total RAM and adjust the service limits accordingly.
+Ollama must be running before the display service starts. The runner uses Ollama's streaming `/api/generate` endpoint and sends `MAX_CONTEXT` and `TOKENS_PER_TURN` as generation options. Choose a model that fits the machine's total RAM and adjust the service limits accordingly.
 
 ## Settings
 
