@@ -109,8 +109,9 @@ def _type_delay(history_bytes: int, max_context: int) -> float:
 
 def _initialize_display() -> None:
     rows = _terminal_rows()
-    _write("\033[?25l\033[2J\033[6;1H")
+    _write("\033[?25l\033[2J")
     _write(f"\033[6;{rows}r")
+    _write("\033[6;1H")
     _render_header()
 
 
