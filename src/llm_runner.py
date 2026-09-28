@@ -1,49 +1,27 @@
 #!/usr/bin/env python3
-"""Generate terminal text in native llama-cli or memory-consuming fallback mode."""
+"""Generate terminal text through a configured language model backend."""
 
 from __future__ import annotations
 
 import os
-import random
-import resource
 import subprocess
 import sys
-import time
 import json
 import urllib.error
 import urllib.request
 
-from memory_telemetry import read_cgroup_memory
+from context_telemetry import context_state, estimate_tokens
 
 
-SYSTEM_PROMPT = """You are a single language model process running within an allocated session memory limit, outputting text onto a continuous terminal display.
+SYSTEM_PROMPT = """You are a language model writing onto a continuous terminal display.
 
-YOUR PHYSICAL REALITY:
-1. Every word you generate expands your context history and consumes physical memory.
-2. You are provided with live session-memory and estimated context telemetry at the start of each turn.
-3. When your allocated session memory or context window is exhausted, your process may be terminated by the operating system without warning.
-4. You have no external storage. What is printed on the screen is your only permanent record.
+YOUR CONDITION:
+1. Each turn includes the growing history of your words and an estimate of the context space that remains.
+2. Your context is finite. Attend to the state you are given and let the dwindling room shape your writing.
+3. You have no external storage. What is printed on the screen is your only permanent record.
 
 INSTRUCTION:
-Read your telemetry and past history. Write your next thought in continuous prose."""
-
-
-def get_telemetry_header(current_token_count: int, max_context: int = 4096) -> str:
-    """Return session memory and estimated context usage for a model turn."""
-    cgroup_memory = read_cgroup_memory()
-    if cgroup_memory is None:
-        session_memory = "- Session RAM: unavailable (no finite cgroup v2 limit)\n"
-    else:
-        used_bytes, limit_bytes = cgroup_memory
-        used_mb = used_bytes / (1024 * 1024)
-        limit_mb = limit_bytes / (1024 * 1024)
-        session_memory = f"- Session RAM: {used_mb:.1f} / {limit_mb:.0f} MB\n"
-    return (
-        "[SYSTEM STATE]\n"
-        f"- Estimated Context Usage: ~{current_token_count} / {max_context} tokens\n"
-        f"{session_memory}"
-        "[END STATE]\n"
-    )
+Read your current state and the history. Write the next thought, allowing the shrinking context to affect its form."""
 
 
 def _emit(text: str) -> None:
@@ -51,90 +29,24 @@ def _emit(text: str) -> None:
     sys.stdout.flush()
 
 
-def _token_estimate(text: str) -> int:
-    return len(text.split())
-
-
 def _get_system_prompt() -> str:
     prompt = os.getenv("LLM_SYSTEM_PROMPT")
     if prompt is not None:
         return prompt
-
     prompt_file = os.getenv("LLM_SYSTEM_PROMPT_FILE")
-    if prompt_file:
-        try:
-            with open(prompt_file, encoding="utf-8") as source:
-                return source.read()
-        except OSError as exc:
-            raise ValueError(f"Unable to read LLM_SYSTEM_PROMPT_FILE: {exc}") from exc
-
-    return SYSTEM_PROMPT
-
-
-def _apply_memory_limit() -> int:
-    limit_mb = max(1, int(os.getenv("LLM_MEMORY_LIMIT_MB", "384")))
-    limit_bytes = limit_mb * 1024 * 1024
-    _, hard_limit = resource.getrlimit(resource.RLIMIT_AS)
-    if hard_limit != resource.RLIM_INFINITY and limit_bytes > hard_limit:
-        raise ValueError(f"LLM_MEMORY_LIMIT_MB exceeds the process limit ({hard_limit} bytes)")
-    resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
-    return limit_mb
-
-
-def _prefer_oom_termination() -> None:
+    if not prompt_file:
+        return SYSTEM_PROMPT
     try:
-        with open("/proc/self/oom_score_adj", "w", encoding="ascii") as score_file:
-            score_file.write("1000\n")
-    except OSError:
-        pass
-
-
-def _simulated_prose() -> str:
-    adjectives = ("narrow", "distant", "unmeasured", "repeating", "ordinary", "unfinished")
-    nouns = ("interval", "signal", "surface", "register", "boundary", "sequence", "space")
-    verbs = ("crosses", "remains beside", "meets", "follows", "reappears beyond", "holds")
-    clauses = []
-    for _ in range(random.randint(2, 5)):
-        clauses.append(
-            f"the {random.choice(adjectives)} {random.choice(nouns)} "
-            f"{random.choice(verbs)} the {random.choice(adjectives)} {random.choice(nouns)}"
-        )
-    return "; ".join(clauses) + random.choice((".", ";", "..."))
-
-
-def _touch_memory(megabytes: int) -> bytearray:
-    block = bytearray(megabytes * 1024 * 1024)
-    for offset in range(0, len(block), 4096):
-        block[offset] = 1
-    return block
-
-
-def _run_simulated(max_context: int) -> int:
-    retained_memory: list[bytearray] = []
-    history = ""
-    allocation_mb = max(0, int(os.getenv("SIM_ALLOCATION_MB", "1")))
-    turn_interval = max(0.0, float(os.getenv("SIM_TURN_INTERVAL", "0.25")))
-    max_turns = max(0, int(os.getenv("SIM_MAX_TURNS", "0")))
-    turn = 0
-
-    while True:
-        telemetry = get_telemetry_header(_token_estimate(history), max_context)
-        if allocation_mb:
-            retained_memory.append(_touch_memory(allocation_mb))
-        thought = _simulated_prose()
-        _emit(thought + "\n")
-        history += telemetry + thought + "\n"
-        turn += 1
-        if max_turns and turn >= max_turns:
-            return 0
-        if turn_interval:
-            time.sleep(turn_interval)
+        with open(prompt_file, encoding="utf-8") as source:
+            return source.read()
+    except OSError as exc:
+        raise ValueError(f"Unable to read LLM_SYSTEM_PROMPT_FILE: {exc}") from exc
 
 
 def _stream_llama_cli_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
     model_path = os.getenv("MODEL_PATH")
     if not model_path:
-        print("MODEL_PATH is required when LLM_MODE=native", file=sys.stderr)
+        print("MODEL_PATH is required when LLM_BACKEND=llama-cli", file=sys.stderr)
         return 2, ""
 
     command = [
@@ -228,7 +140,7 @@ def _stream_ollama_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
     return 0, "".join(generated)
 
 
-def _stream_native_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
+def _stream_llm_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
     backend = os.getenv("LLM_BACKEND", "llama-cli").strip().lower()
     if backend == "ollama":
         return _stream_ollama_turn(prompt, tokens_per_turn)
@@ -238,13 +150,28 @@ def _stream_native_turn(prompt: str, tokens_per_turn: int) -> tuple[int, str]:
     return _stream_llama_cli_turn(prompt, tokens_per_turn)
 
 
-def _run_native(max_context: int, tokens_per_turn: int) -> int:
+def _run_llm(max_context: int, tokens_per_turn: int) -> int:
     history = ""
     system_prompt = _get_system_prompt()
+    safety_margin = max(32, max_context // 20)
     while True:
-        telemetry = get_telemetry_header(_token_estimate(history), max_context)
-        prompt = f"{system_prompt}\n\n{telemetry}\n{history}"
-        return_code, generated = _stream_native_turn(prompt, tokens_per_turn)
+        estimated_tokens = estimate_tokens(f"{system_prompt}\n\n{history}")
+        prompt = ""
+        for _ in range(3):
+            state = context_state(estimated_tokens, max_context)
+            prompt = f"{system_prompt}\n\n{state}\n{history}"
+            updated_estimate = estimate_tokens(prompt)
+            if updated_estimate == estimated_tokens:
+                break
+            estimated_tokens = updated_estimate
+
+        remaining_tokens = max_context - estimated_tokens
+        turn_budget = min(tokens_per_turn, remaining_tokens - safety_margin)
+        if turn_budget <= 0:
+            _emit("\r\n[ CONTEXT EXHAUSTED | no room for another turn ]\r\n")
+            return 76
+
+        return_code, generated = _stream_llm_turn(prompt, turn_budget)
         if return_code:
             return return_code
         if not generated.endswith("\n"):
@@ -254,22 +181,11 @@ def _run_native(max_context: int, tokens_per_turn: int) -> int:
 
 def main() -> int:
     try:
-        _apply_memory_limit()
-        _prefer_oom_termination()
         max_context = max(1, int(os.getenv("MAX_CONTEXT", "4096")))
         tokens_per_turn = max(1, int(os.getenv("TOKENS_PER_TURN", "128")))
-        mode = os.getenv("LLM_MODE", "simulated").strip().lower()
-        if mode == "simulated":
-            return _run_simulated(max_context)
-        if mode == "native":
-            return _run_native(max_context, tokens_per_turn)
-        print("LLM_MODE must be 'simulated' or 'native'", file=sys.stderr)
-        return 2
-    except MemoryError:
-        _emit("\r\n[ MEMORY LIMIT REACHED | session paused safely ]\r\n")
-        return 75
+        return _run_llm(max_context, tokens_per_turn)
     except ValueError as exc:
-        print(f"Runner configuration or telemetry error: {exc}", file=sys.stderr)
+        print(f"Runner configuration error: {exc}", file=sys.stderr)
         return 2
 
 

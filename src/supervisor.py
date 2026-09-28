@@ -17,12 +17,10 @@ import time
 from datetime import datetime
 import tty
 
-import psutil
-from memory_telemetry import read_cgroup_memory
+from context_telemetry import estimate_token_bytes
 
 MIN_TYPE_DELAY = 0.002
 MAX_TYPE_DELAY = 0.35
-DELAY_SCALE = 1.536
 STOP_REQUESTED = False
 
 
@@ -80,69 +78,33 @@ def _meter_line(label: str, fraction: float, width: int) -> str:
     return "|" + content[:inner_width].ljust(inner_width) + "|"
 
 
-def _process_tree_memory(pid: int) -> tuple[int, int]:
-    try:
-        root = psutil.Process(pid)
-        processes = [root, *root.children(recursive=True)]
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        return 0, 0
-
-    virtual_bytes = 0
-    resident_bytes = 0
-    for process in processes:
-        try:
-            memory = process.memory_info()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-        virtual_bytes += memory.vms
-        resident_bytes += memory.rss
-    return virtual_bytes, resident_bytes
-
-
-def _render_header(
-    session_memory_bytes: int | None = None,
-    session_limit_bytes: int | None = None,
-):
-    memory = psutil.virtual_memory()
-    used_bytes = session_memory_bytes or 0
-    session_fraction = (
-        used_bytes / session_limit_bytes
-        if session_limit_bytes
-        else 0.0
-    )
-    pressure = session_fraction * 100
+def _render_header(history_bytes: int = 0, max_context: int = 4096) -> None:
+    history_tokens = estimate_token_bytes(history_bytes)
+    context_fraction = history_tokens / max_context if max_context else 0.0
+    pressure = context_fraction * 100
     red, green, blue = _rgb_gradient(pressure)
     color = f"\033[38;2;{red};{green};{blue}m"
     critical = "\033[5m" if pressure >= 90.0 else ""
-    used_mb = used_bytes / (1024 * 1024)
     width = _terminal_columns()
     inner_width = width - 2
     border = "+" + "-" * inner_width + "+"
     title = "|" + " TERMINAL SOLILOQUY ".center(inner_width)[:inner_width] + "|"
-    if session_memory_bytes is None:
-        session = "SESSION RAM --"
-        session_fraction = 0.0
-    elif session_limit_bytes:
-        limit_mb = session_limit_bytes / (1024 * 1024)
-        session = f"SESSION {used_mb:.1f}/{limit_mb:.0f} MB"
-    else:
-        session = f"SESSION RSS {used_mb:.1f} MB"
+    history_label = f"HISTORY ~{history_tokens}/{max_context} TOKENS"
     lines = (
         border,
         title,
-        _meter_line(session, session_fraction, width),
+        _meter_line(history_label, context_fraction, width),
         border,
     )
     _write("\033[s" + "".join(
         f"\033[{row};1H\033[2K{critical}{color}{line}\033[0m"
         for row, line in enumerate(lines, 1)
     ) + "\033[u")
-    return memory
 
 
-def _type_delay(available_bytes: int) -> float:
-    available_mb = max(1.0, available_bytes / (1024 * 1024))
-    return min(MAX_TYPE_DELAY, max(MIN_TYPE_DELAY, DELAY_SCALE / available_mb))
+def _type_delay(history_bytes: int, max_context: int) -> float:
+    pressure = min(1.0, estimate_token_bytes(history_bytes) / max_context)
+    return MIN_TYPE_DELAY + (MAX_TYPE_DELAY - MIN_TYPE_DELAY) * pressure
 
 
 def _initialize_display() -> None:
@@ -154,15 +116,15 @@ def _initialize_display() -> None:
 
 def _draw_character(
     character: str,
-    session_memory_bytes: int | None = None,
-    session_limit_bytes: int | None = None,
+    history_bytes: int = 0,
+    max_context: int = 4096,
 ) -> None:
-    memory = _render_header(session_memory_bytes, session_limit_bytes)
+    _render_header(history_bytes, max_context)
     if character == "\n":
         _write("\r\n")
     else:
         _write(character)
-    time.sleep(_type_delay(memory.available))
+    time.sleep(_type_delay(history_bytes, max_context))
 
 
 def _start_runner() -> subprocess.Popen[bytes]:
@@ -189,7 +151,10 @@ def _terminate_process_group(process_group: int) -> None:
         pass
 
 
-def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, int, str]:
+def _run_child(
+    keyboard_ready: bool,
+    max_context: int,
+) -> tuple[int, int, str | None, int, str]:
     child = _start_runner()
     assert child.stdout is not None
     assert child.stderr is not None
@@ -199,33 +164,19 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
     if keyboard_ready:
         selector.register(sys.stdin, selectors.EVENT_READ)
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    last_virtual_mb = 0
-    last_rss_mb = 0
-    last_session_memory_bytes = None
-    last_session_limit_bytes = None
+    history_bytes = 0
     keyboard_action = None
     newline_run = 0
     output_count = 0
     runner_stderr = bytearray()
     try:
         while not STOP_REQUESTED:
-            virtual_bytes, resident_bytes = _process_tree_memory(child.pid)
-            if virtual_bytes or resident_bytes:
-                last_virtual_mb = round(virtual_bytes / (1024 * 1024))
-                last_rss_mb = round(resident_bytes / (1024 * 1024))
-            cgroup_memory = read_cgroup_memory()
-            if cgroup_memory is None:
-                last_session_memory_bytes = resident_bytes
-                last_session_limit_bytes = None
-            else:
-                last_session_memory_bytes, last_session_limit_bytes = cgroup_memory
-
             events = selector.select(timeout=0.1)
             if not events:
                 if child.poll() is not None:
                     _terminate_process_group(child.pid)
                     break
-                _render_header(last_session_memory_bytes, last_session_limit_bytes)
+                _render_header(history_bytes, max_context)
                 continue
 
             for key, _ in events:
@@ -262,22 +213,15 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
                 if STOP_REQUESTED:
                     break
                 output_count += 1
+                history_bytes += len(character.encode("utf-8"))
                 if character == "\n":
-                    _draw_character(
-                        character,
-                        last_session_memory_bytes,
-                        last_session_limit_bytes,
-                    )
+                    _draw_character(character, history_bytes, max_context)
                     newline_run += 1
                     continue
                 if newline_run == 1:
                     _write("\r\n")
                 newline_run = 0
-                _draw_character(
-                    character,
-                    last_session_memory_bytes,
-                    last_session_limit_bytes,
-                )
+                _draw_character(character, history_bytes, max_context)
             if keyboard_action is not None:
                 break
             if child.poll() is not None:
@@ -290,27 +234,18 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
         runner_stderr.extend(child.stderr.read() or b"")
         for character in decoder.decode(b"", final=True):
             output_count += 1
+            history_bytes += len(character.encode("utf-8"))
             if character == "\n":
-                _draw_character(
-                    character,
-                    last_session_memory_bytes,
-                    last_session_limit_bytes,
-                )
+                _draw_character(character, history_bytes, max_context)
                 newline_run += 1
                 continue
             if newline_run == 1:
                 _write("\r\n")
             newline_run = 0
-            _draw_character(
-                character,
-                last_session_memory_bytes,
-                last_session_limit_bytes,
-            )
+            _draw_character(character, history_bytes, max_context)
         return (
             return_code,
             child.pid,
-            last_virtual_mb,
-            last_rss_mb,
             keyboard_action,
             output_count,
             runner_stderr[-4096:].decode("utf-8", errors="replace").strip(),
@@ -324,14 +259,12 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
 def _render_diagnostics(
     return_code: int,
     child_pid: int,
-    virtual_mb: int,
-    rss_mb: int,
     output_count: int,
     runner_error: str,
 ) -> None:
-    if return_code == 75:
-        title = "MEMORY LIMIT REACHED"
-        result = "The configured session limit was reached; the runner stopped cleanly."
+    if return_code == 76:
+        title = "CONTEXT WINDOW FILLED"
+        result = "The runner stopped before the next turn exceeded its context budget."
     elif return_code < 0:
         signal_number = -return_code
         try:
@@ -352,7 +285,6 @@ def _render_diagnostics(
     border = "+" + "-" * (width - 2) + "+"
     details = [
         f"Runner PID {child_pid}  |  {timestamp}",
-        f"Virtual {virtual_mb} MB  |  Resident {rss_mb} MB",
         f"Output {output_count} characters",
         f"Status: {result}",
     ]
@@ -375,7 +307,7 @@ def _read_key(keyboard_ready: bool) -> str | None:
     return None
 
 
-def _wait_before_restart(delay_seconds: int, keyboard_ready: bool, output_count: int) -> bool:
+def _wait_before_restart(delay_seconds: int, keyboard_ready: bool) -> bool:
     deadline = time.monotonic() + delay_seconds if delay_seconds else None
     shown_seconds = -1
     while not STOP_REQUESTED:
@@ -404,6 +336,7 @@ def main() -> int:
     try:
         _initialize_display()
         delay_seconds = max(0, int(os.getenv("AUTO_RESTART_DELAY", "30")))
+        max_context = max(1, int(os.getenv("MAX_CONTEXT", "4096")))
         show_diagnostics = os.getenv("SHOW_DIAGNOSTICS", "true").strip().lower() in {
             "1", "true", "yes", "on"
         }
@@ -411,12 +344,10 @@ def main() -> int:
             (
                 return_code,
                 child_pid,
-                virtual_mb,
-                rss_mb,
                 keyboard_action,
                 output_count,
                 runner_error,
-            ) = _run_child(keyboard_settings is not None)
+            ) = _run_child(keyboard_settings is not None, max_context)
             if STOP_REQUESTED:
                 break
             if keyboard_action == "quit":
@@ -427,19 +358,16 @@ def main() -> int:
                 _render_diagnostics(
                     return_code,
                     child_pid,
-                    virtual_mb,
-                    rss_mb,
                     output_count,
                     runner_error,
                 )
             if not _wait_before_restart(
                 delay_seconds,
                 keyboard_settings is not None,
-                output_count,
             ):
                 break
         return 0
-    except (OSError, psutil.Error, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         _write(f"\r\n[ SUPERVISOR ERROR: {exc} ]\r\n")
         return 1
     finally:
