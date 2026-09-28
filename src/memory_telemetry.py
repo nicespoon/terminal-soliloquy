@@ -1,5 +1,7 @@
 """Read memory usage and limits for the current cgroup v2 session."""
 
+from __future__ import annotations
+
 import os
 
 

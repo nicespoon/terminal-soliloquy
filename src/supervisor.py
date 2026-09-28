@@ -170,7 +170,7 @@ def _start_runner() -> subprocess.Popen[bytes]:
         [sys.executable, os.path.join(os.path.dirname(__file__), "llm_runner.py")],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         bufsize=0,
         close_fds=True,
         start_new_session=True,
@@ -189,11 +189,13 @@ def _terminate_process_group(process_group: int) -> None:
         pass
 
 
-def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, int]:
+def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, int, str]:
     child = _start_runner()
     assert child.stdout is not None
+    assert child.stderr is not None
     selector = selectors.DefaultSelector()
     selector.register(child.stdout, selectors.EVENT_READ)
+    selector.register(child.stderr, selectors.EVENT_READ)
     if keyboard_ready:
         selector.register(sys.stdin, selectors.EVENT_READ)
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
@@ -204,6 +206,7 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
     keyboard_action = None
     newline_run = 0
     output_count = 0
+    runner_stderr = bytearray()
     try:
         while not STOP_REQUESTED:
             virtual_bytes, resident_bytes = _process_tree_memory(child.pid)
@@ -234,6 +237,14 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
                         keyboard_action = "restart" if pressed_key == "r" else "quit"
                         _terminate_process_group(child.pid)
                         break
+                elif key.fileobj is child.stderr:
+                    error_data = os.read(child.stderr.fileno(), 4096)
+                    if error_data:
+                        runner_stderr.extend(error_data)
+                        if len(runner_stderr) > 4096:
+                            del runner_stderr[:-4096]
+                    else:
+                        selector.unregister(child.stderr)
             if keyboard_action is not None:
                 break
 
@@ -276,6 +287,7 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
         if STOP_REQUESTED and child.poll() is None:
             _terminate_process_group(child.pid)
         return_code = child.wait()
+        runner_stderr.extend(child.stderr.read() or b"")
         for character in decoder.decode(b"", final=True):
             output_count += 1
             if character == "\n":
@@ -301,10 +313,12 @@ def _run_child(keyboard_ready: bool) -> tuple[int, int, int, int, str | None, in
             last_rss_mb,
             keyboard_action,
             output_count,
+            runner_stderr[-4096:].decode("utf-8", errors="replace").strip(),
         )
     finally:
         selector.close()
         child.stdout.close()
+        child.stderr.close()
 
 
 def _render_diagnostics(
@@ -313,11 +327,8 @@ def _render_diagnostics(
     virtual_mb: int,
     rss_mb: int,
     output_count: int,
+    runner_error: str,
 ) -> None:
-    try:
-        available_mb = psutil.virtual_memory().available / (1024 * 1024)
-    except psutil.Error:
-        available_mb = 0.0
     if return_code == 75:
         title = "MEMORY LIMIT REACHED"
         result = "The configured session limit was reached; the runner stopped cleanly."
@@ -339,12 +350,14 @@ def _render_diagnostics(
     width = _terminal_columns()
     inner_width = max(1, width - 4)
     border = "+" + "-" * (width - 2) + "+"
-    details = (
+    details = [
         f"Runner PID {child_pid}  |  {timestamp}",
-        f"Virtual {virtual_mb} MB  |  Resident {rss_mb} MB  |  System available {available_mb:.1f} MB",
+        f"Virtual {virtual_mb} MB  |  Resident {rss_mb} MB",
         f"Output {output_count} characters",
         f"Status: {result}",
-    )
+    ]
+    if runner_error:
+        details.append(f"Runner stderr: {' '.join(runner_error.split())}")
     panel = [border, "|" + f" {title} ".center(width - 2)[:width - 2] + "|"]
     for detail in details:
         for line in textwrap.wrap(detail, width=inner_width) or [""]:
@@ -402,6 +415,7 @@ def main() -> int:
                 rss_mb,
                 keyboard_action,
                 output_count,
+                runner_error,
             ) = _run_child(keyboard_settings is not None)
             if STOP_REQUESTED:
                 break
@@ -410,7 +424,14 @@ def main() -> int:
             if keyboard_action == "restart":
                 continue
             if show_diagnostics:
-                _render_diagnostics(return_code, child_pid, virtual_mb, rss_mb, output_count)
+                _render_diagnostics(
+                    return_code,
+                    child_pid,
+                    virtual_mb,
+                    rss_mb,
+                    output_count,
+                    runner_error,
+                )
             if not _wait_before_restart(
                 delay_seconds,
                 keyboard_settings is not None,
