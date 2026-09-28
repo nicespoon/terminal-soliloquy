@@ -57,21 +57,21 @@ To optionally cap CPU usage, add a quota to the same service drop-in:
 CPUQuota=200%
 ```
 
-`CPUQuota=200%` allows the service to use up to the equivalent of two CPU cores. The quota applies to the service cgroup, including `foot`, the supervisor, and `llama-cli`; it does not limit Ollama when Ollama runs as a separate system service. A lower quota can reduce the impact on other applications, but may also slow model generation.
+`CPUQuota=200%` allows the service to use up to the equivalent of two CPU cores. The quota applies to the service cgroup, including `foot`, the supervisor, and `llama-server`; it does not limit Ollama when Ollama runs as a separate system service. A lower quota can reduce the impact on other applications, but may also slow model generation.
 
 ## Language Model
 
-The runner requires a configured LLM backend. At the start of every turn it passes the model the growing generated history and an estimate of context used and remaining. The estimate uses UTF-8 size rather than the model's tokenizer, so it is approximate; a small margin is reserved before stopping cleanly. By default the runner uses the built-in system prompt; set `LLM_SYSTEM_PROMPT_FILE` to a UTF-8 text file to replace it, or set `LLM_SYSTEM_PROMPT` directly in the service drop-in. The direct value takes precedence if both are set.
+The runner requires a configured LLM backend. At the start of every turn it passes the model the growing generated history and the context used/remaining. When the backend reports exact token counts (both `llama-server` and Ollama do), that exact figure is used instead of the runner's own UTF-8-based estimate; a small margin is reserved before stopping cleanly either way. By default the runner uses the built-in system prompt; set `LLM_SYSTEM_PROMPT_FILE` to a UTF-8 text file to replace it, or set `LLM_SYSTEM_PROMPT` directly in the service drop-in. The direct value takes precedence if both are set.
 
-### llama-cli (recommended)
+### llama-server (recommended)
 
-`llama-cli` is recommended because its model process runs inside the service cgroup and is covered by the service's `MemoryMax`. Install a compatible `llama-cli` build and obtain a local GGUF model, then configure the user-service drop-in:
+`llama-server` is recommended because the runner spawns and owns it directly: it starts once per runner session, stays resident inside the service cgroup (covered by `MemoryMax`) for the whole session, and is torn down when the runner restarts. Keeping the model resident and reusing its prompt cache across turns avoids the reload cost of relaunching a model process every turn. Install a compatible `llama-server` build and obtain a local GGUF model, then configure the user-service drop-in:
 
 ```ini
 [Service]
-Environment=LLM_BACKEND=llama-cli
+Environment=LLM_BACKEND=llama-server
 Environment=MODEL_PATH=/path/to/model.gguf
-Environment=LLAMA_CLI=/usr/local/bin/llama-cli
+Environment=LLAMA_SERVER=/usr/local/bin/llama-server
 Environment=LLM_SYSTEM_PROMPT_FILE=%h/terminal-soliloquy/prompt.txt
 ```
 
@@ -83,6 +83,8 @@ systemctl --user enable --now terminal-soliloquy.service
 ```
 
 After changing an existing service configuration, apply it with `systemctl --user daemon-reload` and `systemctl --user restart terminal-soliloquy.service`.
+
+If `LLAMA_SERVER_PORT` (default `8080`) is already in use on the machine, set it to a free port in the same drop-in.
 
 ### Ollama
 
@@ -125,9 +127,11 @@ Ollama must be running before the display service starts. The runner uses Ollama
 | `MemoryMax` | `512M` | Hard aggregate memory ceiling for the service cgroup. |
 | `AUTO_RESTART_DELAY` | `30` | Restart seconds; `0` waits for `R` or `Q`. |
 | `SHOW_DIAGNOSTICS` | `true` | Show a short session status after a run. |
-| `LLM_BACKEND` | `llama-cli` | LLM backend: `llama-cli` or `ollama`. |
-| `MODEL_PATH` | unset | GGUF file required by the `llama-cli` backend. |
-| `LLAMA_CLI` | `llama-cli` | llama-cli executable. |
+| `LLM_BACKEND` | `llama-server` | LLM backend: `llama-server` or `ollama`. |
+| `MODEL_PATH` | unset | GGUF file required by the `llama-server` backend. |
+| `LLAMA_SERVER` | `llama-server` | llama-server executable. |
+| `LLAMA_SERVER_PORT` | `8080` | Port the runner starts llama-server on (127.0.0.1 only). |
+| `LLAMA_SERVER_STARTUP_TIMEOUT` | `120` | Seconds to wait for llama-server's `/health` to report ready. |
 | `OLLAMA_MODEL` | unset | Model name pulled into Ollama, required by the `ollama` backend. |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama HTTP API address. |
 | `LLM_SYSTEM_PROMPT_FILE` | unset | UTF-8 file containing the system prompt. |
