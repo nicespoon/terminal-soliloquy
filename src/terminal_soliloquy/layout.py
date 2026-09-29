@@ -33,10 +33,10 @@ def make_header(used_tokens: int, max_tokens: int, model: str) -> Panel:
     title_text.append(f" {model}", style=COLOR_DIM)
 
     progress_text = Text()
-    progress_text.append(f"{used_tokens:,}/{max_tokens:,} tkn ", style="green1")
-    progress_text.append(f"({pct:.1f}%) ", style=COLOR_HEADER)
+    progress_text.append(f"{used_tokens:,}/{max_tokens:,} ⏣", style="green1")
 
-    header_table = Table.grid(expand=True)
+    # padding=(0, 1) adds horizontal space between grid columns
+    header_table = Table.grid(expand=True, padding=(0, 1))
     header_table.add_column(justify="left", ratio=1)
     header_table.add_column(justify="right")
     header_table.add_column(justify="right")
@@ -48,6 +48,7 @@ def make_header(used_tokens: int, max_tokens: int, model: str) -> Panel:
 def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool) -> Panel:
     table = Table(
         box=box.SIMPLE_HEAD,
+        border_style=COLOR_DIM,
         show_edge=False,
         expand=True,
         header_style="bold bright_green",
@@ -72,8 +73,6 @@ def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool
 
     return Panel(
         table,
-        title="[ Soliloquy Stream ]",
-        title_align="left",
         border_style="green1",
         box=box.ROUNDED,
         padding=(0, 1),

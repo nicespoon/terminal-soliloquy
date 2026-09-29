@@ -134,17 +134,17 @@ systemctl --user stop terminal-soliloquy.service
 ### 5. UI & Font Size Configuration (Foot)
 Since Terminal Soliloquy calculates layout scaling dynamically based on terminal cell bounds, adjusting font size directly controls the UI scale.
 
-Dynamic Hotkeys (On the Fly):
+#### Dynamic Hotkeys (On the Fly)
 
-- Increase UI Size: `Ctrl` + `+` or `Ctrl` + `=`
+- Increase UI Size: `Ctrl` + `+`
 - Decrease UI Size: `Ctrl` + `-`
 - Reset to Default: `Ctrl` + `0`
 
-Persistent Configuration (foot.ini):
-Set your default font size or padding by creating or editing `~/.config/foot/foot.ini`:
+#### Persistent Configuration
+
+Set your default font size by creating or editing `~/.config/foot/foot.ini`:
 
 ```Ini, TOML
 [main]
 font=monospace:size=18
-pad=20x10 center # Add pixels on left/right sides, and top/bottom sides
 ```
