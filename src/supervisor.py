@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Glaydos-style Fullscreen Display Supervisor using Rich."""
+"""Glaydos-style Fullscreen Display Supervisor (Ultra-Compact Edition)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
-# Environment and limits
 MAX_CONTEXT = int(os.getenv("MAX_CONTEXT", "4096"))
 STOP_REQUESTED = False
 
@@ -64,7 +63,6 @@ def _read_key(keyboard_ready: bool) -> str | None:
 
 
 def get_pressure_style(pressure: float) -> Style:
-    """Return memory pressure warning styles."""
     if pressure < 50.0:
         return Style(color="bright_cyan", bold=True)
     elif pressure < 80.0:
@@ -80,33 +78,60 @@ class SoliloquyUI:
         self.runner_pid = "-"
         self.status_msg = "ACTIVE"
         self.output_text = Text()
-        self.layout = Layout()
-        self._setup_layout()
-
-    def _setup_layout(self) -> None:
-        self.layout.split(
-            Layout(name="header", size=4),
-            Layout(name="body", ratio=1),
-            Layout(name="footer", size=3),
-        )
-        self.layout["body"].split_row(
-            Layout(name="main", ratio=3),
-            Layout(name="sidebar", ratio=1),
-        )
 
     def start_new_output_turn(self) -> None:
-        """Inject a timestamp delimiter before a new streaming turn begins."""
         now_str = datetime.now().strftime("%H:%M:%S")
         if len(self.output_text) > 0 and not self.output_text.plain.endswith("\n"):
             self.output_text.append("\n")
-        self.output_text.append(
-            f"─── [{now_str}] ────────────────────────────────────────\n",
-            style="bold dim cyan",
-        )
+
+        target_width = max(10, console.width - 2)
+        prefix = f"─ [{now_str}] "
+        fill_count = max(0, target_width - len(prefix))
+        divider = f"{prefix}{'─' * fill_count}\n"
+
+        self.output_text.append(divider, style="bold dim cyan")
 
     def append_stream_text(self, text: str) -> None:
-        """Append raw character output from the LLM stream."""
         self.output_text.append(text, style="bright_white")
+
+    def render_ultra_compact() -> Group:
+        """Render borderless UI designed specifically for 4.5" screens."""
+        w = console.width
+        h = console.height
+        pressure = min(100.0, (self.current_tokens / self.max_context) * 100)
+        p_style = get_pressure_style(pressure)
+
+        # 1. Top status line (1 row)
+        status_line = Text("SOLILOQUY ", style="bold gold1")
+        status_line.append(f"[{self.status_msg[:3]}] ", style=p_style)
+        status_line.append(
+            f"{self.current_tokens}/{self.max_context} ({pressure:.0f}%)",
+            style="bold white",
+        )
+
+        # 2. Top divider line (1 row)
+        top_divider = Text("─" * w, style="bold dim blue")
+
+        # 3. Main Stream Area (Height - 4 rows)
+        visible_rows = max(2, h - 4)
+        text_lines = self.output_text.split("\n")
+        visible_text = Text("\n").join(text_lines[-visible_rows:])
+
+        # 4. Bottom divider line (1 row)
+        bot_divider = Text("─" * w, style="bold dim grey35")
+
+        # 5. Footer line (1 row)
+        footer_line = Text.from_markup(
+            "[bold white_on_blue] R [/] REBOOT   [bold white_on_red] Q [/] QUIT"
+        )
+
+        return Group(
+            status_line,
+            top_divider,
+            visible_text,
+            bot_divider,
+            footer_line,
+        )
 
     def render_header(self) -> Panel:
         pressure = min(100.0, (self.current_tokens / self.max_context) * 100)
@@ -117,7 +142,7 @@ class SoliloquyUI:
         title.append(f"  [{self.status_msg}]", style=style)
 
         bar = Progress(
-            TextColumn("[bold grey70]CONTEXT MEMORY:"),
+            TextColumn("[bold grey70]CONTEXT:"),
             BarColumn(bar_width=None, complete_style=style, finished_style="bright_red"),
             TextColumn(f"[bold white]{self.current_tokens}/{self.max_context}"),
             TextColumn(f"({pressure:.1f}%)"),
@@ -132,9 +157,11 @@ class SoliloquyUI:
         )
 
     def render_main(self) -> Panel:
-        # Render the last 25 lines of formatted text to maintain viewport frame
+        height = console.height
+        visible_rows = max(3, height - 9)
         text_lines = self.output_text.split("\n")
-        visible_text = Text("\n").join(text_lines[-25:])
+        visible_text = Text("\n").join(text_lines[-visible_rows:])
+
         return Panel(
             visible_text,
             title="[bold gold1] OUTPUT STREAM [/bold gold1]",
@@ -149,7 +176,7 @@ class SoliloquyUI:
         table.add_column("Value", style="bright_yellow")
 
         pressure = (self.current_tokens / self.max_context) * 100
-        table.add_row("RUNNER PID", str(self.runner_pid))
+        table.add_row("PID", str(self.runner_pid))
         table.add_row("MODEL", os.getenv("OLLAMA_MODEL", "llama3"))
         table.add_row("TOKENS", f"{self.current_tokens}")
         table.add_row("CAPACITY", f"{self.max_context}")
@@ -158,7 +185,7 @@ class SoliloquyUI:
 
         return Panel(
             table,
-            title="[bold gold1] DIAGNOSTICS [/bold gold1]",
+            title="[bold gold1] DIAG [/bold gold1]",
             box=box.ROUNDED,
             border_style="gold1",
         )
@@ -170,12 +197,30 @@ class SoliloquyUI:
         )
         return Panel(Align.center(controls), box=box.SQUARE, border_style="grey35")
 
-    def update(self) -> Layout:
-        self.layout["header"].update(self.render_header())
-        self.layout["main"].update(self.render_main())
-        self.layout["sidebar"].update(self.render_sidebar())
-        self.layout["footer"].update(self.render_footer())
-        return self.layout
+    def update(self) -> Layout | Group:
+        width = console.width
+        height = console.height
+
+        # Ultra-Compact mode for small displays (4.5" screens / CRT monitors)
+        if width < 60 or height < 18:
+            return self.render_ultra_compact()
+
+        layout = Layout()
+        layout.split(
+            Layout(name="header", size=4),
+            Layout(name="body", ratio=1),
+            Layout(name="footer", size=3),
+        )
+        layout["body"].split_row(
+            Layout(name="main", ratio=3),
+            Layout(name="sidebar", ratio=1),
+        )
+        layout["header"].update(self.render_header())
+        layout["main"].update(self.render_main())
+        layout["sidebar"].update(self.render_sidebar())
+        layout["footer"].update(self.render_footer())
+
+        return layout
 
 
 def _start_runner() -> subprocess.Popen[bytes]:
@@ -211,7 +256,7 @@ def run_supervisor() -> int:
     ui = SoliloquyUI(max_context=MAX_CONTEXT)
 
     try:
-        with Live(ui.update(), console=console, refresh_per_second=20, screen=True) as live:
+        with Live(ui.update(), console=console, refresh_per_second=10, screen=True) as live:
             while not STOP_REQUESTED:
                 runner = _start_runner()
                 ui.runner_pid = runner.pid
@@ -271,7 +316,7 @@ def run_supervisor() -> int:
                 if action == "quit" or STOP_REQUESTED:
                     break
 
-                ui.status_msg = "PAUSED - REBOOTING"
+                ui.status_msg = "REBOOTING"
                 live.update(ui.update())
                 time.sleep(1.0)
 
