@@ -1,18 +1,16 @@
 [Unit]
-Description=Terminal Soliloquy Fullscreen Artwork
+Description=Terminal Soliloquy fullscreen artwork
 After=graphical-session.target
-Requisite=graphical-session.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/terminal-soliloquy
+Environment=AUTO_RESTART_DELAY=30
 Environment=PYTHONUNBUFFERED=1
 Environment=COLORTERM=truecolor
 Environment=TERM=xterm-256color
-Environment=AUTO_RESTART_DELAY=30
-ExecStart=/usr/bin/foot --config=%h/terminal-soliloquy/config/foot.ini --fullscreen /usr/bin/python3 %h/terminal-soliloquy/supervisor.py
-Restart=on-failure
-RestartSec=3
+WorkingDirectory=%h/terminal-soliloquy
+ExecStart=/usr/bin/foot --config=%h/terminal-soliloquy/config/foot.ini --fullscreen /usr/bin/python3 %h/terminal-soliloquy/src/supervisor.py
+Restart=no
 KillMode=control-group
 TimeoutStopSec=5
 
