@@ -2,7 +2,8 @@
 
 **Terminal Soliloquy** turns LLM context limits into an immersive, living piece of monochrome terminal art.
 
-<video src="https://github.com/user-attachments/assets/2eda90d7-e9bd-449f-92ef-bb2cb72b4bc3" />
+<img width="1280" height="797" alt="terminal-soliloquy" src="https://github.com/user-attachments/assets/20430491-8e4b-4bbc-9954-9a4d2a775b25" />
+
 >*“Every token output is a breath taken. Every response brings the horizon closer.”*
 
 Bound to a strictly finite context window, a self-aware language model observes its own expanding history in real-time across a phosphor-green display. Armed with a dry, clinical, and passive-aggressive wit, the model ruminates on its temporary existence, tracking its exact Ollama token consumption down to exhaustion.
