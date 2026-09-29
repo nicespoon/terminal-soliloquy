@@ -22,7 +22,7 @@ def make_header(used_tokens: int, max_tokens: int, model: str) -> Panel:
     bar = ProgressBar(
         total=max_tokens,
         completed=used_tokens,
-        width=24,
+        width=12,
         style="color(234)",
         complete_style="bright_green",
         finished_style="bold bright_green",
@@ -133,7 +133,7 @@ def build_layout(
     # Calculate exact column width for text wrapping inside padded panels
     content_width = console.width - left - right
     inner_panel_width = max(20, content_width - 4)
-    output_col_width = max(10, inner_panel_width - 12)
+    output_col_width = max(10, inner_panel_width - 13)
 
     # Iterate backward from newest entry to ensure bottom lines fit
     visible_entries: List[Tuple[str, Union[str, Text]]] = []
