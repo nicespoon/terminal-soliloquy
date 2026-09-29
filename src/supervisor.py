@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fullscreen display supervisor for the Terminal Soliloquy child process."""
+"""Glaydos-style Fullscreen Display Supervisor using Rich."""
 
 from __future__ import annotations
 
@@ -7,19 +7,30 @@ import codecs
 import os
 import select
 import selectors
-import shutil
 import signal
 import subprocess
 import sys
-import textwrap
 import termios
 import time
-from datetime import datetime
 import tty
+from datetime import datetime
 
-MIN_TYPE_DELAY = 0.002
-MAX_TYPE_DELAY = 0.35
+from rich import box
+from rich.align import Align
+from rich.console import Console, Group
+from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TextColumn
+from rich.style import Style
+from rich.table import Table
+from rich.text import Text
+
+# Environment and limits
+MAX_CONTEXT = int(os.getenv("MAX_CONTEXT", "4096"))
 STOP_REQUESTED = False
+
+console = Console()
 
 
 def _handle_stop_signal(_signum: int, _frame: object) -> None:
@@ -43,109 +54,128 @@ def _restore_keyboard(previous_settings: list | None) -> None:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, previous_settings)
 
 
-def _write(text: str) -> None:
-    sys.stdout.write(text)
-    sys.stdout.flush()
+def _read_key(keyboard_ready: bool) -> str | None:
+    if not keyboard_ready:
+        return None
+    readable, _, _ = select.select([sys.stdin], [], [], 0)
+    if readable:
+        return os.read(sys.stdin.fileno(), 1).decode("ascii", errors="ignore").lower()
+    return None
 
 
-def _rgb_gradient(pressure: float) -> tuple[int, int, int]:
-    pressure = min(100.0, max(0.0, pressure))
-    if pressure <= 70.0:
-        amount = pressure / 70.0
-        return (round(255 * amount), 255, round(64 * (1.0 - amount)))
-    amount = (pressure - 70.0) / 30.0
-    return (255, round(191 * (1.0 - amount)), 0)
-
-
-def _terminal_rows() -> int:
-    return max(10, shutil.get_terminal_size(fallback=(80, 24)).lines)
-
-
-def _terminal_columns() -> int:
-    return max(4, shutil.get_terminal_size(fallback=(80, 24)).columns)
-
-
-def _meter_line(label: str, fraction: float, width: int) -> str:
-    inner_width = width - 2
-    label_width = min(24, inner_width - 6)
-    bar_width = max(1, min(24, inner_width - label_width - 4))
-    fraction = min(1.0, max(0.0, fraction))
-    filled = round(bar_width * fraction)
-    label = label[:label_width].ljust(label_width)
-    content = f" {label} [{'#' * filled}{'.' * (bar_width - filled)}]"
-    return "|" + content[:inner_width].ljust(inner_width) + "|"
-
-
-def _render_header(current_tokens: int = 0, max_context: int = 4096) -> None:
-    context_fraction = current_tokens / max_context if max_context else 0.0
-    pressure = context_fraction * 100
-    red, green, blue = _rgb_gradient(pressure)
-    color = f"\033[38;2;{red};{green};{blue}m"
-    critical = "\033[5m" if pressure >= 90.0 else ""
-    width = _terminal_columns()
-    inner_width = width - 2
-    border = "+" + "-" * inner_width + "+"
-    title = "|" + " TERMINAL SOLILOQUY ".center(inner_width)[:inner_width] + "|"
-    context_label = f"CONTEXT {current_tokens}/{max_context} TOKENS"
-    lines = (
-        border,
-        title,
-        _meter_line(context_label, context_fraction, width),
-        border,
-    )
-    _write("\033[s" + "".join(
-        f"\033[{row};1H\033[2K{critical}{color}{line}\033[0m"
-        for row, line in enumerate(lines, 1)
-    ) + "\033[u")
-
-
-def _type_delay(current_tokens: int, max_context: int) -> float:
-    pressure = min(1.0, current_tokens / max_context)
-    return MIN_TYPE_DELAY + (MAX_TYPE_DELAY - MIN_TYPE_DELAY) * pressure
-
-
-def _initialize_display() -> None:
-    rows = _terminal_rows()
-    _write("\033[?25l\033[2J")
-    _write(f"\033[6;{rows}r")
-    _write("\033[6;1H")
-    _render_header()
-
-
-def _draw_character(
-    character: str,
-    current_tokens: int = 0,
-    max_context: int = 4096,
-) -> None:
-    _render_header(current_tokens, max_context)
-    if character == "\n":
-        _write("\r\n")
+def get_pressure_style(pressure: float) -> Style:
+    """Return memory pressure warning styles."""
+    if pressure < 50.0:
+        return Style(color="bright_cyan", bold=True)
+    elif pressure < 80.0:
+        return Style(color="bright_yellow", bold=True)
     else:
-        _write(character)
-    time.sleep(_type_delay(current_tokens, max_context))
+        return Style(color="bright_red", bold=True, blink=True)
 
 
-def _consume_runner_stderr(
-    data: bytes,
-    pending: bytearray,
-    runner_stderr: bytearray,
-    current_tokens: int,
-) -> int:
-    pending.extend(data)
-    while b"\n" in pending:
-        line, _, remainder = pending.partition(b"\n")
-        pending[:] = remainder
-        line = line.rstrip(b"\r")
-        if line.startswith(b"CONTEXT_TOKENS:"):
-            try:
-                current_tokens = max(0, int(line.partition(b":")[2]))
-            except ValueError:
-                runner_stderr.extend(line + b"\n")
-        else:
-            runner_stderr.extend(line + b"\n")
-        if len(runner_stderr) > 4096:
-            del runner_stderr[:-4096]
-    return current_tokens
+class SoliloquyUI:
+    def __init__(self, max_context: int = 4096) -> None:
+        self.max_context = max_context
+        self.current_tokens = 0
+        self.runner_pid = "-"
+        self.status_msg = "ACTIVE"
+        self.output_text = Text()
+        self.layout = Layout()
+        self._setup_layout()
+
+    def _setup_layout(self) -> None:
+        self.layout.split(
+            Layout(name="header", size=4),
+            Layout(name="body", ratio=1),
+            Layout(name="footer", size=3),
+        )
+        self.layout["body"].split_row(
+            Layout(name="main", ratio=3),
+            Layout(name="sidebar", ratio=1),
+        )
+
+    def start_new_output_turn(self) -> None:
+        """Inject a timestamp delimiter before a new streaming turn begins."""
+        now_str = datetime.now().strftime("%H:%M:%S")
+        if len(self.output_text) > 0 and not self.output_text.plain.endswith("\n"):
+            self.output_text.append("\n")
+        self.output_text.append(
+            f"─── [{now_str}] ────────────────────────────────────────\n",
+            style="bold dim cyan",
+        )
+
+    def append_stream_text(self, text: str) -> None:
+        """Append raw character output from the LLM stream."""
+        self.output_text.append(text, style="bright_white")
+
+    def render_header(self) -> Panel:
+        pressure = min(100.0, (self.current_tokens / self.max_context) * 100)
+        style = get_pressure_style(pressure)
+
+        title = Text("TERMINAL SOLILOQUY ", style="bold bright_white")
+        title.append(":: SYSTEM MONITOR", style="bold gold1")
+        title.append(f"  [{self.status_msg}]", style=style)
+
+        bar = Progress(
+            TextColumn("[bold grey70]CONTEXT MEMORY:"),
+            BarColumn(bar_width=None, complete_style=style, finished_style="bright_red"),
+            TextColumn(f"[bold white]{self.current_tokens}/{self.max_context}"),
+            TextColumn(f"({pressure:.1f}%)"),
+            expand=True,
+        )
+        bar.add_task("context", total=self.max_context, completed=self.current_tokens)
+
+        return Panel(
+            Group(Align.center(title), bar),
+            box=box.ROUNDED,
+            border_style="gold1",
+        )
+
+    def render_main(self) -> Panel:
+        # Render the last 25 lines of formatted text to maintain viewport frame
+        text_lines = self.output_text.split("\n")
+        visible_text = Text("\n").join(text_lines[-25:])
+        return Panel(
+            visible_text,
+            title="[bold gold1] OUTPUT STREAM [/bold gold1]",
+            title_align="left",
+            box=box.HEAVY,
+            border_style="bright_blue",
+        )
+
+    def render_sidebar(self) -> Panel:
+        table = Table(show_header=False, expand=True, box=None)
+        table.add_column("Key", style="bold dim white")
+        table.add_column("Value", style="bright_yellow")
+
+        pressure = (self.current_tokens / self.max_context) * 100
+        table.add_row("RUNNER PID", str(self.runner_pid))
+        table.add_row("MODEL", os.getenv("OLLAMA_MODEL", "llama3"))
+        table.add_row("TOKENS", f"{self.current_tokens}")
+        table.add_row("CAPACITY", f"{self.max_context}")
+        table.add_row("PRESSURE", f"{pressure:.1f}%")
+        table.add_row("TIME", datetime.now().strftime("%H:%M:%S"))
+
+        return Panel(
+            table,
+            title="[bold gold1] DIAGNOSTICS [/bold gold1]",
+            box=box.ROUNDED,
+            border_style="gold1",
+        )
+
+    def render_footer(self) -> Panel:
+        controls = Text.from_markup(
+            "[bold white_on_blue] R [/bold white_on_blue] [bold bright_white]REBOOT SESSION[/bold bright_white]    "
+            "[bold white_on_red] Q [/bold white_on_red] [bold bright_white]QUIT PROGRAM[/bold bright_white]"
+        )
+        return Panel(Align.center(controls), box=box.SQUARE, border_style="grey35")
+
+    def update(self) -> Layout:
+        self.layout["header"].update(self.render_header())
+        self.layout["main"].update(self.render_main())
+        self.layout["sidebar"].update(self.render_sidebar())
+        self.layout["footer"].update(self.render_footer())
+        return self.layout
 
 
 def _start_runner() -> subprocess.Popen[bytes]:
@@ -160,260 +190,95 @@ def _start_runner() -> subprocess.Popen[bytes]:
     )
 
 
-def _terminate_process_group(process_group: int) -> None:
+def _terminate_process_group(pid: int) -> None:
     try:
-        os.killpg(process_group, signal.SIGTERM)
+        os.killpg(pid, signal.SIGTERM)
     except ProcessLookupError:
         return
     time.sleep(0.1)
     try:
-        os.killpg(process_group, signal.SIGKILL)
+        os.killpg(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
 
 
-def _run_child(
-    keyboard_ready: bool,
-    max_context: int,
-) -> tuple[int, int, str | None, int, int, str]:
-    child = _start_runner()
-    assert child.stdout is not None
-    assert child.stderr is not None
-    selector = selectors.DefaultSelector()
-    selector.register(child.stdout, selectors.EVENT_READ)
-    selector.register(child.stderr, selectors.EVENT_READ)
-    if keyboard_ready:
-        selector.register(sys.stdin, selectors.EVENT_READ)
-    decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    current_tokens = 0
-    keyboard_action = None
-    newline_run = 0
-    output_count = 0
-    runner_stderr = bytearray()
-    stderr_pending = bytearray()
-    try:
-        while not STOP_REQUESTED:
-            events = selector.select(timeout=0.1)
-            if not events:
-                if child.poll() is not None:
-                    _terminate_process_group(child.pid)
-                    break
-                _render_header(current_tokens, max_context)
-                continue
-
-            for key, _ in events:
-                if key.fileobj is sys.stdin:
-                    pressed_key = os.read(sys.stdin.fileno(), 1).decode(
-                        "ascii", errors="ignore"
-                    ).lower()
-                    if pressed_key in {"r", "q"}:
-                        keyboard_action = "restart" if pressed_key == "r" else "quit"
-                        _terminate_process_group(child.pid)
-                        break
-                elif key.fileobj is child.stderr:
-                    error_data = os.read(child.stderr.fileno(), 4096)
-                    if error_data:
-                        current_tokens = _consume_runner_stderr(
-                            error_data,
-                            stderr_pending,
-                            runner_stderr,
-                            current_tokens,
-                        )
-                    else:
-                        selector.unregister(child.stderr)
-            if keyboard_action is not None:
-                break
-
-            if not any(key.fileobj is child.stdout for key, _ in events):
-                continue
-            data = os.read(child.stdout.fileno(), 4096)
-            if not data:
-                break
-            for character in decoder.decode(data):
-                pressed_key = _read_key(keyboard_ready)
-                if pressed_key in {"r", "q"}:
-                    keyboard_action = "restart" if pressed_key == "r" else "quit"
-                    _terminate_process_group(child.pid)
-                    break
-                if STOP_REQUESTED:
-                    break
-                output_count += 1
-                if character == "\n":
-                    _draw_character(character, current_tokens, max_context)
-                    newline_run += 1
-                    continue
-                if newline_run == 1:
-                    _write("\r\n")
-                newline_run = 0
-                _draw_character(character, current_tokens, max_context)
-            if keyboard_action is not None:
-                break
-            if child.poll() is not None:
-                _terminate_process_group(child.pid)
-                break
-
-        if STOP_REQUESTED and child.poll() is None:
-            _terminate_process_group(child.pid)
-        return_code = child.wait()
-        current_tokens = _consume_runner_stderr(
-            child.stderr.read() or b"",
-            stderr_pending,
-            runner_stderr,
-            current_tokens,
-        )
-        if stderr_pending:
-            runner_stderr.extend(stderr_pending)
-        if len(runner_stderr) > 4096:
-            del runner_stderr[:-4096]
-        _render_header(current_tokens, max_context)
-        for character in decoder.decode(b"", final=True):
-            output_count += 1
-            if character == "\n":
-                _draw_character(character, current_tokens, max_context)
-                newline_run += 1
-                continue
-            if newline_run == 1:
-                _write("\r\n")
-            newline_run = 0
-            _draw_character(character, current_tokens, max_context)
-        return (
-            return_code,
-            child.pid,
-            keyboard_action,
-            output_count,
-            current_tokens,
-            runner_stderr[-4096:].decode("utf-8", errors="replace").strip(),
-        )
-    finally:
-        selector.close()
-        child.stdout.close()
-        child.stderr.close()
-
-
-def _render_diagnostics(
-    return_code: int,
-    child_pid: int,
-    output_count: int,
-    current_tokens: int,
-    max_context: int,
-    runner_error: str,
-) -> None:
-    if return_code == 76:
-        title = "CONTEXT WINDOW FILLED"
-        result = "The measured Ollama context reached its configured limit."
-    elif return_code < 0:
-        signal_number = -return_code
-        try:
-            signal_name = signal.Signals(signal_number).name
-        except ValueError:
-            signal_name = f"SIGNAL_{signal_number}"
-        title = "SESSION PAUSED"
-        result = f"Runner ended with {signal_name}; supervisor remains available."
-    elif return_code == 137:
-        title = "SESSION PAUSED"
-        result = "Runner ended with status 137; resource limit or external stop is possible."
-    else:
-        title = "SESSION PAUSED"
-        result = f"Runner finished with status {return_code}."
-    timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    width = _terminal_columns()
-    inner_width = max(1, width - 4)
-    border = "+" + "-" * (width - 2) + "+"
-    details = [
-        f"Runner PID {child_pid}  |  {timestamp}",
-        f"Output {output_count} characters",
-        f"Context {current_tokens}/{max_context} tokens",
-        f"Status: {result}",
-    ]
-    if runner_error:
-        details.append(f"Runner stderr: {' '.join(runner_error.split())}")
-    panel = [border, "|" + f" {title} ".center(width - 2)[:width - 2] + "|"]
-    for detail in details:
-        for line in textwrap.wrap(detail, width=inner_width) or [""]:
-            panel.append("| " + line.ljust(inner_width) + " |")
-    panel.append(border)
-    _write("\r\n\033[1;33m" + "\r\n".join(panel) + "\033[0m\r\n")
-
-
-def _read_key(keyboard_ready: bool) -> str | None:
-    if not keyboard_ready:
-        return None
-    readable, _, _ = select.select([sys.stdin], [], [], 0)
-    if readable:
-        return os.read(sys.stdin.fileno(), 1).decode("ascii", errors="ignore").lower()
-    return None
-
-
-def _wait_before_restart(delay_seconds: int, keyboard_ready: bool) -> bool:
-    deadline = time.monotonic() + delay_seconds if delay_seconds else None
-    shown_seconds = -1
-    while not STOP_REQUESTED:
-        key = _read_key(keyboard_ready)
-        if key == "r":
-            return True
-        if key == "q":
-            return False
-        if deadline is None:
-            time.sleep(0.1)
-            continue
-        remaining = max(0, int(deadline - time.monotonic() + 0.999))
-        if remaining != shown_seconds:
-            shown_seconds = remaining
-        if remaining == 0:
-            return True
-        time.sleep(min(0.1, max(0.01, deadline - time.monotonic())))
-    return False
-
-
-def main() -> int:
+def run_supervisor() -> int:
     global STOP_REQUESTED
     signal.signal(signal.SIGTERM, _handle_stop_signal)
     signal.signal(signal.SIGINT, _handle_stop_signal)
+
     keyboard_settings = _setup_keyboard()
+    ui = SoliloquyUI(max_context=MAX_CONTEXT)
+
     try:
-        _initialize_display()
-        delay_seconds = max(0, int(os.getenv("AUTO_RESTART_DELAY", "30")))
-        max_context = max(1, int(os.getenv("MAX_CONTEXT", "4096")))
-        show_diagnostics = os.getenv("SHOW_DIAGNOSTICS", "true").strip().lower() in {
-            "1", "true", "yes", "on"
-        }
-        while not STOP_REQUESTED:
-            (
-                return_code,
-                child_pid,
-                keyboard_action,
-                output_count,
-                current_tokens,
-                runner_error,
-            ) = _run_child(keyboard_settings is not None, max_context)
-            if STOP_REQUESTED:
-                break
-            if keyboard_action == "quit":
-                break
-            if keyboard_action == "restart":
-                continue
-            if show_diagnostics:
-                _render_diagnostics(
-                    return_code,
-                    child_pid,
-                    output_count,
-                    current_tokens,
-                    max_context,
-                    runner_error,
-                )
-            if not _wait_before_restart(
-                delay_seconds,
-                keyboard_settings is not None,
-            ):
-                break
+        with Live(ui.update(), console=console, refresh_per_second=20, screen=True) as live:
+            while not STOP_REQUESTED:
+                runner = _start_runner()
+                ui.runner_pid = runner.pid
+                ui.status_msg = "RUNNING"
+                turn_header_added = False
+                live.update(ui.update())
+
+                assert runner.stdout is not None
+                assert runner.stderr is not None
+
+                selector = selectors.DefaultSelector()
+                selector.register(runner.stdout, selectors.EVENT_READ)
+                selector.register(runner.stderr, selectors.EVENT_READ)
+                if keyboard_settings:
+                    selector.register(sys.stdin, selectors.EVENT_READ)
+
+                decoder = codecs.getincrementaldecoder("utf-8")("replace")
+                action = None
+
+                while not STOP_REQUESTED:
+                    events = selector.select(timeout=0.05)
+                    if not events:
+                        if runner.poll() is not None:
+                            break
+                        live.update(ui.update())
+                        continue
+
+                    for key, _ in events:
+                        if key.fileobj is sys.stdin:
+                            k = _read_key(True)
+                            if k in {"r", "q"}:
+                                action = "restart" if k == "r" else "quit"
+                                _terminate_process_group(runner.pid)
+                                break
+                        elif key.fileobj is runner.stderr:
+                            err_data = os.read(runner.stderr.fileno(), 1024)
+                            for line in err_data.split(b"\n"):
+                                if line.startswith(b"CONTEXT_TOKENS:"):
+                                    try:
+                                        ui.current_tokens = int(line.partition(b":")[2])
+                                    except ValueError:
+                                        pass
+                        elif key.fileobj is runner.stdout:
+                            out_data = os.read(runner.stdout.fileno(), 1024)
+                            if out_data:
+                                if not turn_header_added:
+                                    ui.start_new_output_turn()
+                                    turn_header_added = True
+                                text = decoder.decode(out_data)
+                                ui.append_stream_text(text)
+                                live.update(ui.update())
+
+                    if action or runner.poll() is not None:
+                        break
+
+                _terminate_process_group(runner.pid)
+                if action == "quit" or STOP_REQUESTED:
+                    break
+
+                ui.status_msg = "PAUSED - REBOOTING"
+                live.update(ui.update())
+                time.sleep(1.0)
+
         return 0
-    except (OSError, ValueError) as exc:
-        _write(f"\r\n[ SUPERVISOR ERROR: {exc} ]\r\n")
-        return 1
     finally:
         _restore_keyboard(keyboard_settings)
-        _write("\033[0m\033[r\033[?25h")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run_supervisor())
