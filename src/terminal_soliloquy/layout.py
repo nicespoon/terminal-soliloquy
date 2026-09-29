@@ -1,5 +1,6 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from rich import box
+from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.progress_bar import ProgressBar
@@ -74,7 +75,7 @@ def make_main_table(entries: List[Tuple[str, str]], exhausted: bool) -> Panel:
         title_align="left",
         border_style="green1",
         box=box.ROUNDED,
-        padding=(1, 1),
+        padding=(0, 1),
     )
 
 
@@ -107,17 +108,56 @@ def build_layout(
     status: str,
     auto_restart: bool,
     model: str,
+    screen_padding: Tuple[int, ...] = (0, 0),
+    console: Optional[Console] = None,
 ) -> Layout:
-    layout = Layout()
-    layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="main", ratio=1),
-        Layout(name="footer", size=3),
+    # Unpack padding: (top, right, bottom, left)
+    p = screen_padding
+    if len(p) == 1:
+        top = right = bottom = left = p[0]
+    elif len(p) == 2:
+        top = bottom = p[0]; right = left = p[1]
+    elif len(p) == 4:
+        top, right, bottom, left = p
+    else:
+        top = right = bottom = left = 0
+
+    console = console or Console()
+
+    # Slice entries so content strictly fits within the padded main area
+    max_rows = max(1, console.height - 10 - top - bottom)
+    entries = entries[-max_rows:]
+
+    # Core layout structure
+    content = Layout(name="content")
+    content.split_column(
+        Layout(make_header(used_tokens, max_tokens, model), size=3),
+        Layout(make_main_table(entries, used_tokens >= max_tokens), ratio=1),
+        Layout(make_footer(status, auto_restart), size=3),
     )
 
-    exhausted = used_tokens >= max_tokens
-    layout["header"].update(make_header(used_tokens, max_tokens, model))
-    layout["main"].update(make_main_table(entries, exhausted))
-    layout["footer"].update(make_footer(status, auto_restart))
+    # Horizontal padding split using Text(" ") to suppress placeholders
+    if left or right:
+        h_layout = Layout(name="h_pad")
+        cols = []
+        if left:
+            cols.append(Layout(Text(" "), size=left))
+        cols.append(content)
+        if right:
+            cols.append(Layout(Text(" "), size=right))
+        h_layout.split_row(*cols)
+        content = h_layout
 
-    return layout
+    # Vertical padding split constrained within console.height
+    if top or bottom:
+        v_layout = Layout(name="v_pad")
+        rows = []
+        if top:
+            rows.append(Layout(Text(" "), size=top))
+        rows.append(content)
+        if bottom:
+            rows.append(Layout(Text(" "), size=bottom))
+        v_layout.split_column(*rows)
+        content = v_layout
+
+    return content

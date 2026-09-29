@@ -1,6 +1,7 @@
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Tuple
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -22,6 +23,7 @@ class SoliloquyConfig:
     auto_restart: bool = False
     prompt_file: str = "prompt.txt"
     system_prompt: str = ""
+    screen_padding: Tuple[int, ...] = (0, 0)
 
 
 @dataclass
@@ -56,6 +58,16 @@ def load_config(config_path: str = "config.toml") -> Config:
         else ""
     )
 
+    raw_padding = sol_data.get("screen_padding", (0, 0))
+    if isinstance(raw_padding, list):
+        screen_padding = tuple(raw_padding)
+    elif isinstance(raw_padding, int):
+        screen_padding = (raw_padding,)
+    elif isinstance(raw_padding, tuple):
+        screen_padding = raw_padding
+    else:
+        screen_padding = (0, 0)
+
     return Config(
         ollama=OllamaConfig(
             host=host,
@@ -68,5 +80,6 @@ def load_config(config_path: str = "config.toml") -> Config:
             auto_restart=bool(sol_data.get("auto_restart", False)),
             prompt_file=prompt_file,
             system_prompt=system_prompt,
+            screen_padding=screen_padding,
         ),
     )

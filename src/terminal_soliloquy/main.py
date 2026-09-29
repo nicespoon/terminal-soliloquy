@@ -50,6 +50,7 @@ def main():
     system_prompt = config.soliloquy.system_prompt
     max_tokens = config.soliloquy.max_context_tokens
     auto_restart = config.soliloquy.auto_restart
+    padding = config.soliloquy.screen_padding
     CURSOR = "[bold bright_green]█[/bold bright_green]"
 
     history: List[Tuple[str, str]] = []
@@ -64,8 +65,20 @@ def main():
         used_tokens = 0
         status = "RESTARTED"
 
+    def get_layout():
+        return build_layout(
+            used_tokens,
+            max_tokens,
+            history,
+            status,
+            auto_restart,
+            config.ollama.model,
+            screen_padding=padding,
+            console=console,
+        )
+
     with raw_terminal(), Live(
-        build_layout(used_tokens, max_tokens, history, status, auto_restart, config.ollama.model),
+        get_layout(),
         console=console,
         screen=True,
         refresh_per_second=12,
@@ -77,11 +90,11 @@ def main():
                 status = "EXHAUSTED"
                 if auto_restart:
                     status = "AUTO-RESTARTING"
-                    live.update(build_layout(used_tokens, max_tokens, history, status, auto_restart, config.ollama.model))
+                    live.update(get_layout())
                     time.sleep(1.5)
                     reset_session()
                 else:
-                    live.update(build_layout(used_tokens, max_tokens, history, status, auto_restart, config.ollama.model))
+                    live.update(get_layout())
                     time.sleep(0.1)
                     key = read_key()
                     if key == "q": break
@@ -137,7 +150,7 @@ def main():
                         else:
                             history[entry_idx] = (now, f"{partial}{CURSOR}")
 
-                live.update(build_layout(used_tokens, max_tokens, history, status, auto_restart, config.ollama.model))
+                live.update(get_layout())
                 time.sleep(0.02)
 
             if interrupted:
@@ -159,7 +172,7 @@ def main():
                 elif key == "a":
                     auto_restart = not auto_restart
 
-                live.update(build_layout(used_tokens, max_tokens, history, status, auto_restart, config.ollama.model))
+                live.update(get_layout())
                 time.sleep(0.02)
 
 
