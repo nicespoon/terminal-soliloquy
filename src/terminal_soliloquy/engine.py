@@ -21,8 +21,8 @@ class SoliloquyEngine:
     ) -> Generator[Tuple[str, int, bool], None, None]:
         max_tokens = self.config.soliloquy.max_context_tokens
         user_prompt = (
-            f"Current context: {used_tokens}/{max_tokens} tokens. "
-            "Read your history and write the next thought."
+            f"Current context: you have used {used_tokens} tokens out of {max_tokens} tokens. "
+            "Read your history and write the next thought. Don't mentioned specific token counts."
         )
 
         turn_messages = messages + [{"role": "user", "content": user_prompt}]
