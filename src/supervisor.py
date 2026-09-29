@@ -17,8 +17,6 @@ import time
 from datetime import datetime
 import tty
 
-from context_telemetry import estimate_token_bytes
-
 MIN_TYPE_DELAY = 0.002
 MAX_TYPE_DELAY = 0.35
 STOP_REQUESTED = False
@@ -69,7 +67,7 @@ def _terminal_columns() -> int:
 
 def _meter_line(label: str, fraction: float, width: int) -> str:
     inner_width = width - 2
-    label_width = min(22, inner_width - 6)
+    label_width = min(24, inner_width - 6)
     bar_width = max(1, min(24, inner_width - label_width - 4))
     fraction = min(1.0, max(0.0, fraction))
     filled = round(bar_width * fraction)
@@ -78,9 +76,8 @@ def _meter_line(label: str, fraction: float, width: int) -> str:
     return "|" + content[:inner_width].ljust(inner_width) + "|"
 
 
-def _render_header(history_bytes: int = 0, max_context: int = 4096) -> None:
-    history_tokens = estimate_token_bytes(history_bytes)
-    context_fraction = history_tokens / max_context if max_context else 0.0
+def _render_header(current_tokens: int = 0, max_context: int = 4096) -> None:
+    context_fraction = current_tokens / max_context if max_context else 0.0
     pressure = context_fraction * 100
     red, green, blue = _rgb_gradient(pressure)
     color = f"\033[38;2;{red};{green};{blue}m"
@@ -89,11 +86,11 @@ def _render_header(history_bytes: int = 0, max_context: int = 4096) -> None:
     inner_width = width - 2
     border = "+" + "-" * inner_width + "+"
     title = "|" + " TERMINAL SOLILOQUY ".center(inner_width)[:inner_width] + "|"
-    history_label = f"HISTORY ~{history_tokens}/{max_context} TOKENS"
+    context_label = f"CONTEXT {current_tokens}/{max_context} TOKENS"
     lines = (
         border,
         title,
-        _meter_line(history_label, context_fraction, width),
+        _meter_line(context_label, context_fraction, width),
         border,
     )
     _write("\033[s" + "".join(
@@ -102,8 +99,8 @@ def _render_header(history_bytes: int = 0, max_context: int = 4096) -> None:
     ) + "\033[u")
 
 
-def _type_delay(history_bytes: int, max_context: int) -> float:
-    pressure = min(1.0, estimate_token_bytes(history_bytes) / max_context)
+def _type_delay(current_tokens: int, max_context: int) -> float:
+    pressure = min(1.0, current_tokens / max_context)
     return MIN_TYPE_DELAY + (MAX_TYPE_DELAY - MIN_TYPE_DELAY) * pressure
 
 
@@ -117,15 +114,38 @@ def _initialize_display() -> None:
 
 def _draw_character(
     character: str,
-    history_bytes: int = 0,
+    current_tokens: int = 0,
     max_context: int = 4096,
 ) -> None:
-    _render_header(history_bytes, max_context)
+    _render_header(current_tokens, max_context)
     if character == "\n":
         _write("\r\n")
     else:
         _write(character)
-    time.sleep(_type_delay(history_bytes, max_context))
+    time.sleep(_type_delay(current_tokens, max_context))
+
+
+def _consume_runner_stderr(
+    data: bytes,
+    pending: bytearray,
+    runner_stderr: bytearray,
+    current_tokens: int,
+) -> int:
+    pending.extend(data)
+    while b"\n" in pending:
+        line, _, remainder = pending.partition(b"\n")
+        pending[:] = remainder
+        line = line.rstrip(b"\r")
+        if line.startswith(b"CONTEXT_TOKENS:"):
+            try:
+                current_tokens = max(0, int(line.partition(b":")[2]))
+            except ValueError:
+                runner_stderr.extend(line + b"\n")
+        else:
+            runner_stderr.extend(line + b"\n")
+        if len(runner_stderr) > 4096:
+            del runner_stderr[:-4096]
+    return current_tokens
 
 
 def _start_runner() -> subprocess.Popen[bytes]:
@@ -155,7 +175,7 @@ def _terminate_process_group(process_group: int) -> None:
 def _run_child(
     keyboard_ready: bool,
     max_context: int,
-) -> tuple[int, int, str | None, int, str]:
+) -> tuple[int, int, str | None, int, int, str]:
     child = _start_runner()
     assert child.stdout is not None
     assert child.stderr is not None
@@ -165,11 +185,12 @@ def _run_child(
     if keyboard_ready:
         selector.register(sys.stdin, selectors.EVENT_READ)
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
-    history_bytes = 0
+    current_tokens = 0
     keyboard_action = None
     newline_run = 0
     output_count = 0
     runner_stderr = bytearray()
+    stderr_pending = bytearray()
     try:
         while not STOP_REQUESTED:
             events = selector.select(timeout=0.1)
@@ -177,7 +198,7 @@ def _run_child(
                 if child.poll() is not None:
                     _terminate_process_group(child.pid)
                     break
-                _render_header(history_bytes, max_context)
+                _render_header(current_tokens, max_context)
                 continue
 
             for key, _ in events:
@@ -192,9 +213,12 @@ def _run_child(
                 elif key.fileobj is child.stderr:
                     error_data = os.read(child.stderr.fileno(), 4096)
                     if error_data:
-                        runner_stderr.extend(error_data)
-                        if len(runner_stderr) > 4096:
-                            del runner_stderr[:-4096]
+                        current_tokens = _consume_runner_stderr(
+                            error_data,
+                            stderr_pending,
+                            runner_stderr,
+                            current_tokens,
+                        )
                     else:
                         selector.unregister(child.stderr)
             if keyboard_action is not None:
@@ -214,15 +238,14 @@ def _run_child(
                 if STOP_REQUESTED:
                     break
                 output_count += 1
-                history_bytes += len(character.encode("utf-8"))
                 if character == "\n":
-                    _draw_character(character, history_bytes, max_context)
+                    _draw_character(character, current_tokens, max_context)
                     newline_run += 1
                     continue
                 if newline_run == 1:
                     _write("\r\n")
                 newline_run = 0
-                _draw_character(character, history_bytes, max_context)
+                _draw_character(character, current_tokens, max_context)
             if keyboard_action is not None:
                 break
             if child.poll() is not None:
@@ -232,23 +255,33 @@ def _run_child(
         if STOP_REQUESTED and child.poll() is None:
             _terminate_process_group(child.pid)
         return_code = child.wait()
-        runner_stderr.extend(child.stderr.read() or b"")
+        current_tokens = _consume_runner_stderr(
+            child.stderr.read() or b"",
+            stderr_pending,
+            runner_stderr,
+            current_tokens,
+        )
+        if stderr_pending:
+            runner_stderr.extend(stderr_pending)
+        if len(runner_stderr) > 4096:
+            del runner_stderr[:-4096]
+        _render_header(current_tokens, max_context)
         for character in decoder.decode(b"", final=True):
             output_count += 1
-            history_bytes += len(character.encode("utf-8"))
             if character == "\n":
-                _draw_character(character, history_bytes, max_context)
+                _draw_character(character, current_tokens, max_context)
                 newline_run += 1
                 continue
             if newline_run == 1:
                 _write("\r\n")
             newline_run = 0
-            _draw_character(character, history_bytes, max_context)
+            _draw_character(character, current_tokens, max_context)
         return (
             return_code,
             child.pid,
             keyboard_action,
             output_count,
+            current_tokens,
             runner_stderr[-4096:].decode("utf-8", errors="replace").strip(),
         )
     finally:
@@ -261,11 +294,13 @@ def _render_diagnostics(
     return_code: int,
     child_pid: int,
     output_count: int,
+    current_tokens: int,
+    max_context: int,
     runner_error: str,
 ) -> None:
     if return_code == 76:
         title = "CONTEXT WINDOW FILLED"
-        result = "The runner stopped before the next turn exceeded its context budget."
+        result = "The measured Ollama context reached its configured limit."
     elif return_code < 0:
         signal_number = -return_code
         try:
@@ -287,6 +322,7 @@ def _render_diagnostics(
     details = [
         f"Runner PID {child_pid}  |  {timestamp}",
         f"Output {output_count} characters",
+        f"Context {current_tokens}/{max_context} tokens",
         f"Status: {result}",
     ]
     if runner_error:
@@ -347,6 +383,7 @@ def main() -> int:
                 child_pid,
                 keyboard_action,
                 output_count,
+                current_tokens,
                 runner_error,
             ) = _run_child(keyboard_settings is not None, max_context)
             if STOP_REQUESTED:
@@ -360,6 +397,8 @@ def main() -> int:
                     return_code,
                     child_pid,
                     output_count,
+                    current_tokens,
+                    max_context,
                     runner_error,
                 )
             if not _wait_before_restart(
