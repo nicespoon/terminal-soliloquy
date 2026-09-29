@@ -8,4 +8,4 @@ max_context_tokens = 2048
 poll_delay = 1.5
 auto_restart = false
 prompt_file = "prompt.txt"
-screen_padding = [0, 1]  # [vertical, horizontal] or [top, right, bottom, left]
+screen_padding = [0, 0]  # [vertical, horizontal] or [top, right, bottom, left]

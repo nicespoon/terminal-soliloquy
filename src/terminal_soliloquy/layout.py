@@ -86,18 +86,14 @@ def make_footer(status: str, auto_restart: bool) -> Panel:
     footer_text.append(" R ", style=COLOR_KEY_BADGE)
     footer_text.append(" Restart  ", style="green1")
     footer_text.append(" A ", style=COLOR_KEY_BADGE)
-    footer_text.append(f" Auto-Restart: [{'ON' if auto_restart else 'OFF'}]  ", style="green1")
+    footer_text.append(f" Auto: [{'ON' if auto_restart else 'OFF'}]  ", style="green1")
 
     status_table = Table.grid(expand=True)
     status_table.add_column(justify="left")
     status_table.add_column(justify="right")
 
-    # Render default Rich 'dots' spinner for active/in-progress statuses
-    if status.endswith("...") or any(kw in status for kw in ("THINKING", "STREAMING", "INITIALISING", "RESTARTING")):
-        status_display = Spinner("dots", text=Text(status, style=COLOR_HEADER), style="bold bright_green")
-    else:
-        status_display = Text(status, style=COLOR_HEADER)
-
+    status_display = Spinner("dots", text=Text(status, style=COLOR_HEADER), style="bold bright_green")
+    
     status_table.add_row(footer_text, status_display)
 
     return Panel(status_table, box=box.ROUNDED, border_style="dim green", padding=(0, 1))

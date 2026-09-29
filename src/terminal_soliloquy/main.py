@@ -56,7 +56,7 @@ def main():
     history: List[Tuple[str, str]] = []
     messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
     used_tokens = 0
-    status = "INITIALISING..."
+    status = "INITIALISING"
 
     def reset_session():
         nonlocal history, messages, used_tokens, status
@@ -91,7 +91,7 @@ def main():
                 if auto_restart:
                     status = "AUTO-RESTARTING"
                     live.update(get_layout())
-                    time.sleep(1.5)
+                    time.sleep(30)
                     reset_session()
                 else:
                     live.update(get_layout())
@@ -103,7 +103,7 @@ def main():
                     continue
 
             # 2. Setup turn & run Ollama in background worker thread
-            status = "THINKING..."
+            status = "THINKING"
             entry_idx = len(history)
             now = time.strftime("%H:%M:%S")
             history.append((now, CURSOR))
@@ -142,7 +142,7 @@ def main():
                         status = f"OLLAMA ERROR: {str(item)[:30]}"
                     else:
                         partial, tokens, done = item
-                        status = "STREAMING..."
+                        status = "STREAMING"
                         if done:
                             used_tokens = tokens
                             final_text = partial
