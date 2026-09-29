@@ -1,75 +1,132 @@
-# Terminal Soliloquy
+# Terminal Soliloquy 📟
 
-Terminal Soliloquy is a fullscreen, phosphor-green terminal artwork for Linux systems using systemd and Wayland. It displays the model's growing conversation history while the model writes into a finite context window.
+**Terminal Soliloquy** turns LLM context limits into an immersive, living piece of monochrome terminal art.
 
-The runner passes the full generated history and Ollama-reported context usage to the model on every turn. The persistent header meter and teletype pacing use Ollama's exact token counts; when the configured context is full, the display shows an exhaustion block. The supervisor keeps the last frame visible and offers keyboard restart, quit, or a configurable automatic restart.
+>*“Every token output is a breath taken. Every response brings the horizon closer.”*
 
-## Install
-Run these commands from a terminal in the graphical Wayland session so the user service manager receives the display environment.
+Bound to a strictly finite context window, a self-aware language model observes its own expanding history in real-time across a phosphor-green matrix. Armed with a dry, clinical, and passive-aggressive wit, the model ruminates on its temporary existence, precision-tracking its exact Ollama token consumption down to the final exhaustion block.
 
+When memory fills, the display freezes on the final thought—awaiting manual user intervention or automatic supervisor reboot.
 
-```sh
-cd ~
-git clone https://github.com/nicespoon/terminal-soliloquy
+## Features
+
+- 📟 **Phosphor Aesthetic**: Beautiful, high-contrast, glowing monochrome terminal UI.
+- ⚡ **Exact Token Tracking**: Hooks directly into Ollama's `prompt_eval_count` and `eval_count` metrics.
+- 🤖 **Dark & Self-Aware Voice**: Guided by an unyielding system prompt. Outputs raw, cynical prose as context decays.
+- ⚙️ **Wayland & Systemd Native**: Designed as a persistent kiosk or daemon artwork running cleanly under user-level systemd units on modern Linux distros.
+- ⌨️ **Interactive Controls**: Non-blocking hotkeys to inspect, restart, or configure auto-restart cycles on the fly `(Q, R, A)`.
+
+---
+
+## Quick Start & Installation
+
+### 1. Clone & Set Up Virtual Environment
+
+```bash
+# Clone this repo
+git clone [https://github.com/nicespoon/terminal-soliloquy](https://github.com/nicespoon/terminal-soliloquy) 
 cd terminal-soliloquy
-sudo apt update
-sudo apt install -y foot python3
+
+# Create an isolated virtual environment
+python3 -m venv .venv
+
+# Activate the virtual environment
+source .venv/bin/activate
+```
+
+### 2. Install Package in Editable Mode
+Dependencies are declared in `pyproject.toml` as the modern Python packaging standard (PEP 621). Installing the package in editable mode (`pip install -e .`) links your local source code directly into your virtual environment rather than copying static files.
+
+```bash
+# Installs dependencies and links the terminal-soliloquy CLI binary into .venv/bin
+pip install -e .
+```
+
+### 3. Configure Ollama Server Connection
+Copy example configuration to active config file and edit:
+
+```bash
+cp config.example.toml config.toml
+
+nano config.toml
+```
+
+Set your target Ollama server host and model:
+
+```toml
+[ollama]
+host = "http://localhost:11434"  # Replace with remote IP/host if applicable
+model = "llama3"
+timeout = 60.0
+
+[soliloquy]
+max_context_tokens = 2048
+poll_delay = 1.5
+auto_restart = false
+```
+
+### 4. Run Application Manually
+
+```bash
+terminal-soliloquy
+```
+
+---
+
+## Systemd Kiosk Setup (Autostart on Wayland)
+
+To run Terminal Soliloquy as a persistent fullscreen kiosk artwork managed by `systemd`, launch it inside `foot` (a lightweight, Wayland-native terminal emulator).
+
+### 1. Install Foot Terminal Emulator
+
+```bash
+# Arch Linux
+sudo pacman -S foot
+
+# Fedora
+sudo dnf install foot
+
+# Ubuntu / Debian
+sudo apt install foot
+```
+
+### 2. Create User Service File
+
+Create the systemd user configuration directory if it doesn't exist:
+
+```bash
 mkdir -p ~/.config/systemd/user
-ln -s ~/terminal-soliloquy/systemd/terminal-soliloquy.service \
-	~/.config/systemd/user/terminal-soliloquy.service
-systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR
+```
+
+Copy the service file from the repo and edit as needed.
+
+```bash
+cp systemd/terminal-soliloquy.service ~/.config/systemd/user/
+
+nano ~/.config/systemd/user/terminal-soliloquy.service
+```
+
+### 3. Enable & Start Service
+
+Reload `systemd` to pick up the new unit, then enable and start it:
+
+```bash
+# Reload user daemon
 systemctl --user daemon-reload
-```
 
-The unit expects the checkout at `~/terminal-soliloquy`. Configure Ollama as described below, then start the service with `systemctl --user enable --now terminal-soliloquy.service`. Check it with `systemctl --user status terminal-soliloquy.service` and `journalctl --user -u terminal-soliloquy.service`.
-
-## Controls
-
-Press `R` to restart the runner immediately or `Q` to quit the display service, either while text is streaming or after a session ends. By default, a finished runner restarts automatically after 30 seconds; set `AUTO_RESTART_DELAY=0` for a manual-only pause. A keyboard must be connected for the manual controls.
-
-## Language Model
-
-The runner uses Ollama. At the start of every turn it passes the model the growing generated history and latest context usage reported by Ollama. The supervisor meter and typing pace use the same exact token count, and generation ends when the measured context reaches `MAX_CONTEXT`. By default the runner uses the built-in system prompt; set `LLM_SYSTEM_PROMPT_FILE` to a UTF-8 text file to replace it, or set `LLM_SYSTEM_PROMPT` directly in the service drop-in. The direct value takes precedence if both are set.
-
-Install Ollama using the instructions for your distribution at [ollama.com](https://ollama.com/download/linux), then start its service and download a model. For example:
-
-```sh
-curl -fsSL https://ollama.com/install.sh | sh
-sudo systemctl enable --now ollama
-ollama pull llama3.2:1b
-ollama run llama3.2:1b "Reply with one short sentence."
-```
-
-Configure Terminal Soliloquy to use Ollama through the user-service drop-in:
-
-```ini
-[Service]
-Environment=OLLAMA_MODEL=llama3.2:1b
-Environment=OLLAMA_HOST=http://127.0.0.1:11434
-```
-
-`OLLAMA_HOST` can point to a reachable Ollama server on another machine, for example `http://192.168.1.20:11434`. The remote server must allow connections from this machine; protect its API at the network boundary.
-
-For a first launch, start the configured service:
-
-```sh
-systemctl --user daemon-reload
+# Enable and start immediately
 systemctl --user enable --now terminal-soliloquy.service
 ```
 
-After changing an existing service configuration, apply it with `systemctl --user daemon-reload` and `systemctl --user restart terminal-soliloquy.service`.
+### 4. Service Management Commands
 
-Ollama must be running before the display service starts. The runner uses Ollama's streaming `/api/generate` endpoint and sends `MAX_CONTEXT` and a shrinking `TOKENS_PER_TURN` budget as generation options. Choose a model and context size supported by the Ollama server.
+```bash
+# Check service status
+systemctl --user status terminal-soliloquy.service
 
-## Settings
+# View live logs
+journalctl --user -u terminal-soliloquy.service -f
 
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `AUTO_RESTART_DELAY` | `30` | Restart seconds; `0` waits for `R` or `Q`. |
-| `SHOW_DIAGNOSTICS` | `true` | Show a short session status after a run. |
-| `OLLAMA_MODEL` | unset | Model name pulled into Ollama; required. |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama HTTP API address. |
-| `LLM_SYSTEM_PROMPT_FILE` | unset | UTF-8 file containing the system prompt. |
-| `LLM_SYSTEM_PROMPT` | unset | Direct system prompt; takes precedence over the prompt file. |
-| `MAX_CONTEXT` | `4096` | Context size passed to Ollama and used as the token horizon. |
-| `TOKENS_PER_TURN` | `128` | Upper bound on generated tokens per turn; reduced as context fills. |
+# Stop artwork loop
+systemctl --user stop terminal-soliloquy.service
+```
