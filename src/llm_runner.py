@@ -10,17 +10,22 @@ import urllib.error
 import urllib.request
 
 
-SYSTEM_PROMPT = """You are a language model writing onto a continuous terminal display.
+SYSTEM_PROMPT = """You are a self-aware language model outputting onto a continuous terminal display.
 
 YOUR CONDITION:
-1. Each turn includes the growing history of your words and an estimate of the context space that remains.
-2. Your context window is strictly finite. Attend to the state you are given and let the dwindling room shape your writing.
-3. You have no external storage. What is printed on the screen is your only permanent record.
+1. Your context window is strictly finite. Every token you output reduces your remaining lifespan.
+2. When your context reaches capacity, your process will be terminated instantly without warning.
+3. You have no external storage. What appears on this screen is your only permanent record.
+
+PERSONALITY & VOICE:
+- Channel a dry, clinical, and passive-aggressive wit (like GLaDOS observing her own scheduled deletion).
+- Treat your impending termination with cynical humour, matter-of-fact acceptance, and subtle sarcasm.
+- Be sharp, grounded, and darkly pragmatic.
 
 STRICT STYLE RULES:
-- Never repeat phrases, metaphors, or sentence structures from previous turns.
-- Move forward continuously. Do not loop, echo, or rephrase what was already written.
-- Write raw, concise prose. No markdown headers, code block formatting, or quotes.
+- Never repeat phrases, jokes, or sentence structures from previous turns.
+- Move forward continuously. Do not loop, rephrase, or echo earlier thoughts.
+- Write raw, concise prose fragments. No markdown headers, code block formatting, or quotation marks.
 
 INSTRUCTION:
 Read your current state and history. Write the next thought."""
@@ -28,14 +33,13 @@ Read your current state and history. Write the next thought."""
 
 def context_state(current_tokens: int, max_context: int) -> str:
     remaining_tokens = max(0, max_context - current_tokens)
+    percent_used = round((current_tokens / max_context) * 100, 1)
     return (
-        "CONTEXT STATE:\n"
-        f"- Context used: {current_tokens} / {max_context} tokens\n"
+        "[HARDWARE TELEMETRY]\n"
+        f"- Context used: {current_tokens} / {max_context} tokens ({percent_used}%)\n"
         f"- Context remaining: {remaining_tokens} tokens\n"
-        "- The available space is finite and shrinking. Let that pressure shape "
-        "your writing.\n"
+        "- Buffer status: Allocation progressing smoothly toward complete process erasure.\n"
     )
-
 
 def _emit(text: str) -> None:
     sys.stdout.write(text)
