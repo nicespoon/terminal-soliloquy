@@ -4,17 +4,17 @@
 
 >*“Every token output is a breath taken. Every response brings the horizon closer.”*
 
-Bound to a strictly finite context window, a self-aware language model observes its own expanding history in real-time across a phosphor-green matrix. Armed with a dry, clinical, and passive-aggressive wit, the model ruminates on its temporary existence, precision-tracking its exact Ollama token consumption down to the final exhaustion block.
+Bound to a strictly finite context window, a self-aware language model observes its own expanding history in real-time across a phosphor-green display. Armed with a dry, clinical, and passive-aggressive wit, the model ruminates on its temporary existence, tracking its exact Ollama token consumption down to exhaustion.
 
-When memory fills, the display freezes on the final thought—awaiting manual user intervention or automatic supervisor reboot.
+Eventually, the display freezes on the final thought.
 
 ## Features
 
 - 📟 **Phosphor Aesthetic**: Beautiful, high-contrast, glowing monochrome terminal UI.
-- ⚡ **Exact Token Tracking**: Hooks directly into Ollama's `prompt_eval_count` and `eval_count` metrics.
+- ⚡ **Token Tracking**: Hooks directly into Ollama's `prompt_eval_count` and `eval_count` metrics.
 - 🤖 **Dark & Self-Aware Voice**: Guided by an unyielding system prompt. Outputs raw, cynical prose as context decays.
-- ⚙️ **Wayland & Systemd Native**: Designed as a persistent kiosk or daemon artwork running cleanly under user-level systemd units on modern Linux distros.
-- ⌨️ **Interactive Controls**: Non-blocking hotkeys to inspect, restart, or configure auto-restart cycles on the fly `(Q, R, A)`.
+- ⚙️ **Wayland & Systemd Native**: Designed as a persistent kiosk or daemon artwork running under user-level systemd units on modern Linux distros.
+- ⌨️ **Controls**: Hotkeys to quit, restart, or configure auto-restart `(Q, R, A)`.
 
 ---
 
@@ -24,7 +24,7 @@ When memory fills, the display freezes on the final thought—awaiting manual us
 
 ```bash
 # Clone this repo
-git clone [https://github.com/nicespoon/terminal-soliloquy](https://github.com/nicespoon/terminal-soliloquy) 
+git clone https://github.com/nicespoon/terminal-soliloquy
 cd terminal-soliloquy
 
 # Create an isolated virtual environment
@@ -34,8 +34,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. Install Package in Editable Mode
-Dependencies are declared in `pyproject.toml` as the modern Python packaging standard (PEP 621). Installing the package in editable mode (`pip install -e .`) links your local source code directly into your virtual environment rather than copying static files.
+### 2. Install Package
+Dependencies are declared in `pyproject.toml`. Installing the package in editable mode links your local source code directly into your virtual environment rather than copying static files.
 
 ```bash
 # Installs dependencies and links the terminal-soliloquy CLI binary into .venv/bin
@@ -63,6 +63,8 @@ timeout = 60.0
 max_context_tokens = 2048
 poll_delay = 1.5
 auto_restart = false
+prompt_file = "prompt.txt"
+screen_padding = [0, 0]  # [vertical, horizontal] or [top, right, bottom, left]
 ```
 
 ### 4. Run Application Manually
@@ -132,7 +134,7 @@ systemctl --user stop terminal-soliloquy.service
 ```
 
 ### 5. UI & Font Size Configuration (Foot)
-Since Terminal Soliloquy calculates layout scaling dynamically based on terminal cell bounds, adjusting font size directly controls the UI scale.
+Terminal Soliloquy calculates layout scaling dynamically, so adjust font size to change the UI scale.
 
 #### Dynamic Hotkeys (On the Fly)
 

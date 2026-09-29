@@ -66,8 +66,9 @@ def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool
         table.add_row(
             "[FULL]",
             Text(
-                " ⚡ CONTEXT WINDOW EXHAUSTION BLOCK REACHED — AWAITING SUPERVISOR RESTART ⚡ ",
+                " CONTEXT EXHAUSTED ",
                 style=COLOR_EXHAUSTION,
+                justify="center",
             ),
         )
 
