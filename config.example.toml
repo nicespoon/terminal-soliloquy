@@ -1,6 +1,5 @@
 [llamacpp]
 host = "http://localhost:8080"  # llama.cpp / llama-server HTTP endpoint
-model = "default"
 timeout = 60.0
 
 [soliloquy]

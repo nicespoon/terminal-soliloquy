@@ -58,12 +58,10 @@ Set your target `llama.cpp` server host and model:
 ```toml
 [llamacpp]
 host = "http://localhost:8080"  # Replace with remote IP/host if applicable
-model = "default"
 timeout = 60.0
 
 [soliloquy]
 max_context_tokens = 2048
-poll_delay = 1.5
 auto_restart = false
 prompt_file = "prompt.txt"
 screen_padding = [0, 0]  # [vertical, horizontal] or [top, right, bottom, left]

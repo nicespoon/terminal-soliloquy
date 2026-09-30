@@ -19,7 +19,6 @@ class LlamaCppConfig:
 @dataclass
 class SoliloquyConfig:
     max_context_tokens: int = 2048
-    poll_delay: float = 1.5
     auto_restart: bool = False
     prompt_file: str = "prompt.txt"
     system_prompt: str = ""
@@ -76,7 +75,6 @@ def load_config(config_path: str = "config.toml") -> Config:
         ),
         soliloquy=SoliloquyConfig(
             max_context_tokens=int(sol_data.get("max_context_tokens", 2048)),
-            poll_delay=float(sol_data.get("poll_delay", 1.5)),
             auto_restart=bool(sol_data.get("auto_restart", False)),
             prompt_file=prompt_file,
             system_prompt=system_prompt,

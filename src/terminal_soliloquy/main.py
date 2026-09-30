@@ -47,6 +47,8 @@ def main():
     console = Console()
     engine = SoliloquyEngine(config)
 
+    model_name = engine.get_model_name()
+
     system_prompt = config.soliloquy.system_prompt
     max_tokens = config.soliloquy.max_context_tokens
     auto_restart = config.soliloquy.auto_restart
@@ -59,11 +61,12 @@ def main():
     status = "INITIALISING"
 
     def reset_session():
-        nonlocal history, messages, used_tokens, status
+        nonlocal history, messages, used_tokens, status, model_name
         history.clear()
         messages = [{"role": "system", "content": system_prompt}]
         used_tokens = 0
         status = "RESTARTED"
+        model_name = engine.get_model_name()  # Refresh in case model changed on host
 
     def get_layout():
         return build_layout(
@@ -72,7 +75,7 @@ def main():
             history,
             status,
             auto_restart,
-            config.llamacpp.model,
+            model_name,
             screen_padding=padding,
             console=console,
         )
@@ -148,6 +151,7 @@ def main():
                             final_text = partial
                             history[entry_idx] = (now, final_text)
                         else:
+                            used_tokens = tokens
                             history[entry_idx] = (now, f"{partial}{CURSOR}")
 
                 live.update(get_layout())
@@ -159,21 +163,6 @@ def main():
             if final_text:
                 messages.append({"role": "assistant", "content": final_text})
                 status = "RUNNING"
-
-            # 3. Inter-turn delay loop
-            start_pause = time.time()
-            while time.time() - start_pause < config.soliloquy.poll_delay:
-                key = read_key()
-                if key == "q":
-                    return
-                elif key == "r":
-                    reset_session()
-                    break
-                elif key == "a":
-                    auto_restart = not auto_restart
-
-                live.update(get_layout())
-                time.sleep(0.02)
 
 
 if __name__ == "__main__":
