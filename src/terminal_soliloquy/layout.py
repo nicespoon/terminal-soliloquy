@@ -35,7 +35,6 @@ def make_header(used_tokens: int, max_tokens: int, model: str) -> Panel:
     progress_text = Text()
     progress_text.append(f"{used_tokens:,}/{max_tokens:,} ⏣", style="green1")
 
-    # padding=(0, 1) adds horizontal space between grid columns
     header_table = Table.grid(expand=True, padding=(0, 1))
     header_table.add_column(justify="left", ratio=1)
     header_table.add_column(justify="right")
@@ -59,7 +58,9 @@ def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool
     table.add_column("TIME", style=COLOR_TIMESTAMP, width=10, no_wrap=True)
     table.add_column("MODEL OUTPUT / CONVERSATION HISTORY", style=COLOR_TEXT, ratio=1)
 
-    for ts, output in entries:
+    for i, (ts, output) in enumerate(entries):
+        if i > 0:
+            table.add_row("", "")
         table.add_row(ts, output)
 
     if exhausted:
@@ -139,6 +140,12 @@ def build_layout(
     for ts, output in reversed(entries):
         if lines_left <= 0:
             break
+
+        needed_spacing = 1 if visible_entries else 0
+        if lines_left <= needed_spacing:
+            break
+
+        lines_left -= needed_spacing
 
         try:
             text_obj = Text.from_markup(output)

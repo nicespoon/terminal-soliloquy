@@ -51,7 +51,7 @@ def main():
     max_tokens = config.soliloquy.max_context_tokens
     auto_restart = config.soliloquy.auto_restart
     padding = config.soliloquy.screen_padding
-    CURSOR = "[bold bright_green]█[/bold bright_green]"
+    CURSOR = "\u200b[bold bright_green]█[/bold bright_green]"
 
     history: List[Tuple[str, str]] = []
     messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
