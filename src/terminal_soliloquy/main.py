@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple
 
 from rich.console import Console
 from rich.live import Live
+from rich.markup import escape
 
 from terminal_soliloquy.config import load_config
 from terminal_soliloquy.engine import SoliloquyEngine
@@ -53,7 +54,6 @@ def main():
     max_tokens = config.soliloquy.max_context_tokens
     auto_restart = config.soliloquy.auto_restart
     padding = config.soliloquy.screen_padding
-    CURSOR = "\u200b[bold bright_green]█[/bold bright_green]"
 
     history: List[Tuple[str, str]] = []
     messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
@@ -109,7 +109,7 @@ def main():
             status = "THINKING"
             entry_idx = len(history)
             now = time.strftime("%H:%M:%S")
-            history.append((now, CURSOR))
+            history.append((now, "[bold #000000 on bright_green] [/]"))
 
             stream_q: queue.Queue = queue.Queue()
 
@@ -149,10 +149,15 @@ def main():
                         if done:
                             used_tokens = tokens
                             final_text = partial
-                            history[entry_idx] = (now, final_text)
+                            history[entry_idx] = (now, escape(final_text))
                         else:
                             used_tokens = tokens
-                            history[entry_idx] = (now, f"{partial}{CURSOR}")
+                            if partial:
+                                safe_text = escape(partial[:-1])
+                                last_char = escape(partial[-1])
+                                history[entry_idx] = (now, f"{safe_text}[bold #000000 on bright_green]{last_char}[/]")
+                            else:
+                                history[entry_idx] = (now, "[bold #000000 on bright_green] [/]")
 
                 live.update(get_layout())
                 time.sleep(0.02)

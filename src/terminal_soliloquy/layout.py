@@ -12,8 +12,8 @@ COLOR_HEADER = "bold bright_green"
 COLOR_DIM = "dim green"
 COLOR_TIMESTAMP = "bold green"
 COLOR_TEXT = "spring_green1"
-COLOR_KEY_BADGE = "bold black on green1"
-COLOR_EXHAUSTION = "bold black on bright_green"
+COLOR_KEY_BADGE = "bold #000000 on green1"
+COLOR_EXHAUSTION = "bold #000000 on bright_green"
 
 
 def make_header(used_tokens: int, max_tokens: int, model: str) -> Panel:
