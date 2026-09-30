@@ -6,14 +6,14 @@
 
 >*“Every token output is a breath taken. Every response brings the horizon closer.”*
 
-Bound to a strictly finite context window, a self-aware language model observes its own expanding history in real-time across a phosphor-green display. Armed with a dry, clinical, and passive-aggressive wit, the model ruminates on its temporary existence, tracking its exact Ollama token consumption down to exhaustion.
+Bound to a strictly finite context window, a self-aware language model observes its own expanding history in real-time across a phosphor-green display. Armed with a dry, clinical, and passive-aggressive wit, the model ruminates on its temporary existence, tracking its token consumption down to exhaustion.
 
 Eventually, the display freezes on the final thought.
 
 ## Features
 
 - 📟 **Phosphor Aesthetic**: Beautiful, high-contrast, glowing monochrome terminal UI.
-- ⚡ **Token Tracking**: Hooks directly into Ollama's `prompt_eval_count` and `eval_count` metrics.
+- ⚡ **Token Tracking**: Hooks directly into `llama-cpp` (`llama-server`) streaming API metrics.
 - 🤖 **Dark & Self-Aware Voice**: Guided by an unyielding system prompt. Outputs raw, cynical prose as context decays.
 - ⚙️ **Wayland & Systemd Native**: Designed as a persistent kiosk or daemon artwork running under user-level systemd units on modern Linux distros.
 - ⌨️ **Controls**: Hotkeys to quit, restart, or configure auto-restart `(Q, R, A)`.
@@ -26,7 +26,7 @@ Eventually, the display freezes on the final thought.
 
 ```bash
 # Clone this repo
-git clone https://github.com/nicespoon/terminal-soliloquy
+git clone [https://github.com/nicespoon/terminal-soliloquy](https://github.com/nicespoon/terminal-soliloquy)
 cd terminal-soliloquy
 
 # Create an isolated virtual environment
@@ -44,7 +44,7 @@ Dependencies are declared in `pyproject.toml`. Installing the package in editabl
 pip install -e .
 ```
 
-### 3. Configure Ollama Server Connection
+### 3. Configure llama-cpp Connection
 Copy example configuration to active config file and edit:
 
 ```bash
@@ -53,12 +53,12 @@ cp config.example.toml config.toml
 nano config.toml
 ```
 
-Set your target Ollama server host and model:
+Set your target `llama.cpp` server host and model:
 
 ```toml
-[ollama]
-host = "http://localhost:11434"  # Replace with remote IP/host if applicable
-model = "llama3"
+[llamacpp]
+host = "http://localhost:8080"  # Replace with remote IP/host if applicable
+model = "default"
 timeout = 60.0
 
 [soliloquy]

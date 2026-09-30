@@ -10,9 +10,9 @@ else:
 
 
 @dataclass
-class OllamaConfig:
-    host: str = "http://localhost:11434"
-    model: str = "llama3"
+class LlamaCppConfig:
+    host: str = "http://localhost:8080"
+    model: str = "default"
     timeout: float = 60.0
 
 
@@ -28,7 +28,7 @@ class SoliloquyConfig:
 
 @dataclass
 class Config:
-    ollama: OllamaConfig
+    llamacpp: LlamaCppConfig
     soliloquy: SoliloquyConfig
 
 
@@ -39,16 +39,16 @@ def load_config(config_path: str = "config.toml") -> Config:
         prompt_path = path.parent / sol_cfg.prompt_file
         if prompt_path.exists():
             sol_cfg.system_prompt = prompt_path.read_text(encoding="utf-8").strip()
-        return Config(ollama=OllamaConfig(), soliloquy=sol_cfg)
+        return Config(llamacpp=LlamaCppConfig(), soliloquy=sol_cfg)
 
     with open(path, "rb") as f:
         data = tomllib.load(f)
 
-    ollama_data = data.get("ollama", {})
+    llama_data = data.get("llamacpp", data.get("ollama", {}))
     sol_data = data.get("soliloquy", {})
 
-    host = ollama_data.get("host", "http://localhost:11434")
-    model = ollama_data.get("model", "llama3")
+    host = llama_data.get("host", "http://localhost:8080")
+    model = llama_data.get("model", "default")
 
     prompt_file = sol_data.get("prompt_file", "prompt.txt")
     prompt_path = path.parent / prompt_file
@@ -69,10 +69,10 @@ def load_config(config_path: str = "config.toml") -> Config:
         screen_padding = (0, 0)
 
     return Config(
-        ollama=OllamaConfig(
+        llamacpp=LlamaCppConfig(
             host=host,
             model=model,
-            timeout=float(ollama_data.get("timeout", 60.0)),
+            timeout=float(llama_data.get("timeout", 60.0)),
         ),
         soliloquy=SoliloquyConfig(
             max_context_tokens=int(sol_data.get("max_context_tokens", 2048)),

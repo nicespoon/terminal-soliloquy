@@ -72,7 +72,7 @@ def main():
             history,
             status,
             auto_restart,
-            config.ollama.model,
+            config.llamacpp.model,
             screen_padding=padding,
             console=console,
         )
@@ -102,7 +102,7 @@ def main():
                     elif key == "a": auto_restart = not auto_restart
                     continue
 
-            # 2. Setup turn & run Ollama in background worker thread
+            # 2. Setup turn & run llama-cpp in background worker thread
             status = "THINKING"
             entry_idx = len(history)
             now = time.strftime("%H:%M:%S")
@@ -139,7 +139,7 @@ def main():
                     if isinstance(item, Exception):
                         if len(history) > entry_idx:
                             history.pop()
-                        status = f"OLLAMA ERROR: {str(item)[:30]}"
+                        status = f"LLAMA-CPP ERROR: {str(item)[:30]}"
                     else:
                         partial, tokens, done = item
                         status = "STREAMING"
