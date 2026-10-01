@@ -19,10 +19,20 @@ class LlamaCppConfig:
 @dataclass
 class SoliloquyConfig:
     max_context_tokens: int = 2048
+    end_behavior: str = "freeze"
+    restart_duration: float = 30.0
+    quit_duration: float = 0.0
     auto_restart: bool = False
     prompt_file: str = "prompt.txt"
     system_prompt: str = ""
     screen_padding: Tuple[int, ...] = (0, 0)
+
+    def __post_init__(self):
+        valid_behaviors = ("restart", "freeze", "quit")
+        if self.end_behavior not in valid_behaviors:
+            self.end_behavior = "restart" if self.auto_restart else "freeze"
+        else:
+            self.auto_restart = (self.end_behavior == "restart")
 
 
 @dataclass
@@ -67,6 +77,42 @@ def load_config(config_path: str = "config.toml") -> Config:
     else:
         screen_padding = (0, 0)
 
+    raw_end_behavior = sol_data.get("end_behavior", sol_data.get("end_behaviour"))
+    if raw_end_behavior is not None:
+        end_behavior = str(raw_end_behavior).strip().lower()
+        if end_behavior not in ("restart", "freeze", "quit"):
+            end_behavior = "freeze"
+    elif "auto_restart" in sol_data:
+        end_behavior = "restart" if sol_data.get("auto_restart") else "freeze"
+    else:
+        end_behavior = "freeze"
+
+    try:
+        restart_duration = max(
+            0.0,
+            float(
+                sol_data.get(
+                    "restart_duration",
+                    sol_data.get("restart_timer", sol_data.get("restart_delay", 30.0)),
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        restart_duration = 30.0
+
+    try:
+        quit_duration = max(
+            0.0,
+            float(
+                sol_data.get(
+                    "quit_duration",
+                    sol_data.get("quit_timer", sol_data.get("quit_delay", 0.0)),
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        quit_duration = 0.0
+
     return Config(
         llamacpp=LlamaCppConfig(
             host=host,
@@ -75,7 +121,10 @@ def load_config(config_path: str = "config.toml") -> Config:
         ),
         soliloquy=SoliloquyConfig(
             max_context_tokens=int(sol_data.get("max_context_tokens", 2048)),
-            auto_restart=bool(sol_data.get("auto_restart", False)),
+            end_behavior=end_behavior,
+            restart_duration=restart_duration,
+            quit_duration=quit_duration,
+            auto_restart=(end_behavior == "restart"),
             prompt_file=prompt_file,
             system_prompt=system_prompt,
             screen_padding=screen_padding,

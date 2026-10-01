@@ -4,7 +4,13 @@ timeout = 60.0
 
 [soliloquy]
 max_context_tokens = 2048
-poll_delay = 1.5
-auto_restart = false
 prompt_file = "prompt.txt"
 screen_padding = [0, 0]  # [vertical, horizontal] or [top, right, bottom, left]
+
+# End behaviour options when max_context_tokens is reached:
+# "restart" - wait restart_duration seconds, then start a new session
+# "freeze"  - display final output indefinitely until manual restart (R) or quit (Q)
+# "quit"    - wait quit_duration seconds, then exit the application
+end_behavior = "freeze"
+restart_duration = 30.0  # seconds to wait before auto-restarting (when end_behavior = "restart")
+quit_duration = 30.0      # seconds to wait before auto-quitting (when end_behavior = "quit")

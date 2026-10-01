@@ -81,14 +81,19 @@ def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool
     )
 
 
-def make_footer(status: str, auto_restart: bool) -> Panel:
+def make_footer(status: str, end_behavior: Union[str, bool] = "freeze") -> Panel:
+    if isinstance(end_behavior, bool):
+        behavior_label = "RESTART" if end_behavior else "FREEZE"
+    else:
+        behavior_label = str(end_behavior).upper()
+
     footer_text = Text()
     footer_text.append(" Q ", style=COLOR_KEY_BADGE)
     footer_text.append(" Quit  ", style="green1")
     footer_text.append(" R ", style=COLOR_KEY_BADGE)
     footer_text.append(" Restart  ", style="green1")
     footer_text.append(" A ", style=COLOR_KEY_BADGE)
-    footer_text.append(f" Auto: [{'ON' if auto_restart else 'OFF'}]  ", style="green1")
+    footer_text.append(f" End: [{behavior_label}]  ", style="green1")
 
     status_table = Table.grid(expand=True)
     status_table.add_column(justify="left")
@@ -106,11 +111,14 @@ def build_layout(
     max_tokens: int,
     entries: List[Tuple[str, str]],
     status: str,
-    auto_restart: bool,
-    model: str,
+    end_behavior: Union[str, bool] = "freeze",
+    model: str = "default",
     screen_padding: Tuple[int, ...] = (0, 0),
     console: Optional[Console] = None,
+    auto_restart: Optional[bool] = None,
 ) -> Layout:
+    if auto_restart is not None:
+        end_behavior = auto_restart
     p = screen_padding
     if len(p) == 1:
         top = right = bottom = left = p[0]
@@ -177,7 +185,7 @@ def build_layout(
     content.split_column(
         Layout(make_header(used_tokens, max_tokens, model), size=3),
         Layout(make_main_table(visible_entries, used_tokens >= max_tokens), ratio=1),
-        Layout(make_footer(status, auto_restart), size=3),
+        Layout(make_footer(status, end_behavior), size=3),
     )
 
     # Horizontal padding split

@@ -1,4 +1,5 @@
 import contextlib
+import math
 import os
 import queue
 import select
@@ -7,7 +8,7 @@ import termios
 import threading
 import time
 import tty
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from rich.console import Console
 from rich.live import Live
@@ -16,6 +17,67 @@ from rich.markup import escape
 from terminal_soliloquy.config import load_config
 from terminal_soliloquy.engine import SoliloquyEngine
 from terminal_soliloquy.layout import build_layout
+
+END_BEHAVIORS = ("restart", "freeze", "quit")
+
+
+def cycle_end_behavior(current: str) -> str:
+    try:
+        idx = END_BEHAVIORS.index(current)
+        return END_BEHAVIORS[(idx + 1) % len(END_BEHAVIORS)]
+    except ValueError:
+        return "restart"
+
+
+class KeyboardController:
+    """Non-blocking keyboard controller running in a dedicated thread."""
+
+    def __init__(self):
+        self._queue: queue.Queue = queue.Queue()
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self):
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        while not self._stop_event.is_set():
+            if sys.stdin.isatty():
+                try:
+                    r, _, _ = select.select([sys.stdin], [], [], 0.05)
+                    if r and not self._stop_event.is_set():
+                        ch = os.read(sys.stdin.fileno(), 1).decode("utf-8", errors="ignore").lower()
+                        if ch == "\x03":
+                            self._queue.put("q")
+                        elif ch:
+                            self._queue.put(ch)
+                except Exception:
+                    pass
+            else:
+                time.sleep(0.05)
+
+    def get_key(self) -> Optional[str]:
+        try:
+            return self._queue.get_nowait()
+        except queue.Empty:
+            return None
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=0.2)
+
+
+@contextlib.contextmanager
+def keyboard_controller():
+    controller = KeyboardController()
+    controller.start()
+    try:
+        yield controller
+    finally:
+        controller.stop()
 
 
 @contextlib.contextmanager
@@ -34,7 +96,7 @@ def raw_terminal():
 
 
 def read_key() -> str:
-    """Non-blocking key read directly from standard input."""
+    """Non-blocking key read directly from standard input (fallback)."""
     if sys.stdin.isatty() and select.select([sys.stdin], [], [], 0)[0]:
         try:
             return os.read(sys.stdin.fileno(), 1).decode("utf-8", errors="ignore").lower()
@@ -44,6 +106,13 @@ def read_key() -> str:
 
 
 def main():
+    try:
+        _run_soliloquy()
+    except KeyboardInterrupt:
+        pass
+
+
+def _run_soliloquy():
     config = load_config()
     console = Console()
     engine = SoliloquyEngine(config)
@@ -52,7 +121,9 @@ def main():
 
     system_prompt = config.soliloquy.system_prompt
     max_tokens = config.soliloquy.max_context_tokens
-    auto_restart = config.soliloquy.auto_restart
+    end_behavior = config.soliloquy.end_behavior
+    restart_duration = config.soliloquy.restart_duration
+    quit_duration = config.soliloquy.quit_duration
     padding = config.soliloquy.screen_padding
 
     history: List[Tuple[str, str]] = []
@@ -74,13 +145,13 @@ def main():
             max_tokens,
             history,
             status,
-            auto_restart,
+            end_behavior,
             model_name,
             screen_padding=padding,
             console=console,
         )
 
-    with raw_terminal(), Live(
+    with raw_terminal(), keyboard_controller() as keyboard, Live(
         get_layout(),
         console=console,
         screen=True,
@@ -90,19 +161,38 @@ def main():
         while True:
             # 1. Handle Context Exhaustion
             if used_tokens >= max_tokens:
-                status = "EXHAUSTED"
-                if auto_restart:
-                    status = "AUTO-RESTARTING"
+                exhaustion_start = time.time()
+                while used_tokens >= max_tokens:
+                    key = keyboard.get_key()
+                    if key == "q":
+                        return
+                    elif key == "r":
+                        reset_session()
+                        break
+                    elif key == "a":
+                        end_behavior = cycle_end_behavior(end_behavior)
+                        exhaustion_start = time.time()
+
+                    if end_behavior == "restart":
+                        elapsed = time.time() - exhaustion_start
+                        if restart_duration <= 0 or elapsed >= restart_duration:
+                            reset_session()
+                            break
+                        remaining = max(0, int(math.ceil(restart_duration - elapsed)))
+                        status = f"RESTARTING IN {remaining}s"
+                    elif end_behavior == "quit":
+                        elapsed = time.time() - exhaustion_start
+                        if quit_duration <= 0 or elapsed >= quit_duration:
+                            return
+                        remaining = max(0, int(math.ceil(quit_duration - elapsed)))
+                        status = f"QUITTING IN {remaining}s"
+                    else:  # freeze
+                        status = "EXHAUSTED"
+
                     live.update(get_layout())
-                    time.sleep(30)
-                    reset_session()
-                else:
-                    live.update(get_layout())
-                    time.sleep(0.1)
-                    key = read_key()
-                    if key == "q": break
-                    elif key == "r": reset_session()
-                    elif key == "a": auto_restart = not auto_restart
+                    time.sleep(0.05)
+
+                if used_tokens < max_tokens:
                     continue
 
             # 2. Setup turn & run llama-cpp in background worker thread
@@ -127,7 +217,7 @@ def main():
 
             # Active streaming & key interception loop (main thread)
             while worker.is_alive() or not stream_q.empty():
-                key = read_key()
+                key = keyboard.get_key()
                 if key == "q":
                     return
                 elif key == "r":
@@ -135,7 +225,7 @@ def main():
                     interrupted = True
                     break
                 elif key == "a":
-                    auto_restart = not auto_restart
+                    end_behavior = cycle_end_behavior(end_behavior)
 
                 while not stream_q.empty():
                     item = stream_q.get_nowait()
@@ -168,6 +258,23 @@ def main():
             if final_text:
                 messages.append({"role": "assistant", "content": final_text})
                 status = "RUNNING"
+            elif len(history) > entry_idx:
+                history.pop()
+
+            if status.startswith("LLAMA-CPP ERROR:"):
+                # Pause briefly on error before retrying, while keeping keys responsive
+                err_start = time.time()
+                while time.time() - err_start < 2.0:
+                    live.update(get_layout())
+                    time.sleep(0.05)
+                    key = keyboard.get_key()
+                    if key == "q":
+                        return
+                    elif key == "r":
+                        reset_session()
+                        break
+                    elif key == "a":
+                        end_behavior = cycle_end_behavior(end_behavior)
 
 
 if __name__ == "__main__":

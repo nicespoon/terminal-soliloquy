@@ -16,7 +16,7 @@ Eventually, the display freezes on the final thought.
 - ⚡ **Token Tracking**: Hooks directly into `llama-cpp` (`llama-server`) streaming API metrics.
 - 🤖 **Dark & Self-Aware Voice**: Guided by an unyielding system prompt. Outputs raw, cynical prose as context decays.
 - ⚙️ **Wayland & Systemd Native**: Designed as a persistent kiosk or daemon artwork running under user-level systemd units on modern Linux distros.
-- ⌨️ **Controls**: Hotkeys to quit, restart, or configure auto-restart `(Q, R, A)`.
+- ⌨️ **Controls**: Hotkeys to quit, restart, or cycle end behaviour `(Q, R, A)`.
 
 ---
 
@@ -62,7 +62,9 @@ timeout = 60.0
 
 [soliloquy]
 max_context_tokens = 2048
-auto_restart = false
+end_behavior = "freeze"  # "restart", "freeze", or "quit"
+restart_duration = 30.0  # seconds to wait before auto-restarting (when end_behavior = "restart")
+quit_duration = 0.0      # seconds to wait before auto-quitting (when end_behavior = "quit")
 prompt_file = "prompt.txt"
 screen_padding = [0, 0]  # [vertical, horizontal] or [top, right, bottom, left]
 ```
