@@ -13,12 +13,13 @@ class SoliloquyEngine:
         base_url = self.config.llamacpp.host.rstrip("/")
         endpoint = f"{base_url}/apply-template"
 
+        request_data = {
+            "messages": messages,
+            "chat_template_kwargs": {"enable_thinking": False},
+        }
         req = urllib.request.Request(
             endpoint,
-            data=json.dumps({
-                "messages": messages,
-                "chat_template_kwargs": {"enable_thinking": False},
-            }).encode("utf-8"),
+            data=json.dumps(request_data).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -89,14 +90,22 @@ class SoliloquyEngine:
     ) -> Generator[Tuple[str, int, bool], None, None]:
         max_tokens = self.config.soliloquy.max_context_tokens
 
-        percent_remaining = max(0, 100 - int((used_tokens / max_tokens) * 100)) if max_tokens > 0 else 0
-        turn_messages = messages + [{
+        if max_tokens > 0:
+            percent_remaining = max(
+                0, 100 - int((used_tokens / max_tokens) * 100)
+            )
+        else:
+            percent_remaining = 0
+
+        context_message = {
             "role": "user",
             "content": (
-                f"Internal context: {percent_remaining}% remains. Use this only to shape your thought; "
-                "never state the percentage or any numeric context status. Log your next thought directly."
+                f"Internal context: {percent_remaining}% remains. Use this only to shape "
+                "your thought; never state the percentage or any numeric context status. "
+                "Log your next thought directly."
             ),
-        }]
+        }
+        turn_messages = messages + [context_message]
 
         prompt_str = self.format_prompt(turn_messages)
         
@@ -114,9 +123,14 @@ class SoliloquyEngine:
         base_url = self.config.llamacpp.host.rstrip("/")
         endpoint = base_url if base_url.endswith("/completion") else f"{base_url}/completion"
 
+        request_data = {
+            "prompt": prompt_str,
+            "stream": True,
+            "n_predict": remaining_tokens,
+        }
         req = urllib.request.Request(
             endpoint,
-            data=json.dumps({"prompt": prompt_str, "stream": True, "n_predict": remaining_tokens}).encode("utf-8"),
+            data=json.dumps(request_data).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )

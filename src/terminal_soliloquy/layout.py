@@ -58,10 +58,10 @@ def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool
     table.add_column("TIME", style=COLOR_TIMESTAMP, width=10, no_wrap=True)
     table.add_column("MODEL OUTPUT / CONVERSATION HISTORY", style=COLOR_TEXT, ratio=1)
 
-    for i, (ts, output) in enumerate(entries):
-        if i > 0:
+    for entry_index, (timestamp, output) in enumerate(entries):
+        if entry_index > 0:
             table.add_row("", "")
-        table.add_row(ts, output)
+        table.add_row(timestamp, output)
 
     if exhausted:
         table.add_row(
@@ -119,13 +119,14 @@ def build_layout(
 ) -> Layout:
     if auto_restart is not None:
         end_behavior = auto_restart
-    p = screen_padding
-    if len(p) == 1:
-        top = right = bottom = left = p[0]
-    elif len(p) == 2:
-        top = bottom = p[0]; right = left = p[1]
-    elif len(p) == 4:
-        top, right, bottom, left = p
+    padding = screen_padding
+    if len(padding) == 1:
+        top = right = bottom = left = padding[0]
+    elif len(padding) == 2:
+        top = bottom = padding[0]
+        right = left = padding[1]
+    elif len(padding) == 4:
+        top, right, bottom, left = padding
     else:
         top = right = bottom = left = 0
 
@@ -145,7 +146,7 @@ def build_layout(
     visible_entries: List[Tuple[str, Union[str, Text]]] = []
     lines_left = available_lines
 
-    for ts, output in reversed(entries):
+    for timestamp, output in reversed(entries):
         if lines_left <= 0:
             break
 
@@ -164,17 +165,17 @@ def build_layout(
         num_lines = max(1, len(wrapped_lines))
 
         if num_lines <= lines_left:
-            visible_entries.append((ts, text_obj))
+            visible_entries.append((timestamp, text_obj))
             lines_left -= num_lines
         else:
             # Keep only the tail end of the entry that fits on screen
             trimmed_lines = wrapped_lines[-lines_left:]
             trimmed_text = Text()
-            for i, line in enumerate(trimmed_lines):
-                if i > 0:
+            for line_index, line in enumerate(trimmed_lines):
+                if line_index > 0:
                     trimmed_text.append("\n")
                 trimmed_text.append(line)
-            visible_entries.append((ts, trimmed_text))
+            visible_entries.append((timestamp, trimmed_text))
             lines_left = 0
             break
 

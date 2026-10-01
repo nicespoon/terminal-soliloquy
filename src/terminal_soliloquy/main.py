@@ -95,16 +95,6 @@ def raw_terminal():
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
-def read_key() -> str:
-    """Non-blocking key read directly from standard input (fallback)."""
-    if sys.stdin.isatty() and select.select([sys.stdin], [], [], 0)[0]:
-        try:
-            return os.read(sys.stdin.fileno(), 1).decode("utf-8", errors="ignore").lower()
-        except Exception:
-            pass
-    return ""
-
-
 def main():
     try:
         _run_soliloquy()
@@ -112,7 +102,7 @@ def main():
         pass
 
 
-def _run_soliloquy():
+def _run_soliloquy() -> None:
     config = load_config()
     console = Console()
     engine = SoliloquyEngine(config)
@@ -197,7 +187,7 @@ def _run_soliloquy():
 
             # 2. Setup turn & run llama-cpp in background worker thread
             status = "THINKING"
-            entry_idx = len(history)
+            entry_index = len(history)
             now = time.strftime("%H:%M:%S")
             history.append((now, "[bold #000000 on bright_green] [/]"))
 
@@ -230,7 +220,7 @@ def _run_soliloquy():
                 while not stream_q.empty():
                     item = stream_q.get_nowait()
                     if isinstance(item, Exception):
-                        if len(history) > entry_idx:
+                        if len(history) > entry_index:
                             history.pop()
                         status = f"LLAMA-CPP ERROR: {str(item)[:30]}"
                     else:
@@ -239,16 +229,23 @@ def _run_soliloquy():
                             status = "STREAMING"
                             used_tokens = tokens
                             final_text = partial
-                            history[entry_idx] = (now, escape(final_text))
+                            history[entry_index] = (now, escape(final_text))
                         else:
                             used_tokens = tokens
                             if partial:
                                 status = "STREAMING"
                                 safe_text = escape(partial[:-1])
                                 last_char = escape(partial[-1])
-                                history[entry_idx] = (now, f"{safe_text}[bold #000000 on bright_green]{last_char}[/]")
+                                history[entry_index] = (
+                                    now,
+                                    f"{safe_text}[bold #000000 on bright_green]"
+                                    f"{last_char}[/]",
+                                )
                             else:
-                                history[entry_idx] = (now, "[bold #000000 on bright_green] [/]")
+                                history[entry_index] = (
+                                    now,
+                                    "[bold #000000 on bright_green] [/]",
+                                )
 
                 live.update(get_layout())
                 time.sleep(0.02)
@@ -259,7 +256,7 @@ def _run_soliloquy():
             if final_text:
                 messages.append({"role": "assistant", "content": final_text})
                 status = "RUNNING"
-            elif len(history) > entry_idx:
+            elif len(history) > entry_index:
                 history.pop()
 
             if status.startswith("LLAMA-CPP ERROR:"):

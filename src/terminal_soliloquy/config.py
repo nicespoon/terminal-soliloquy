@@ -27,7 +27,7 @@ class SoliloquyConfig:
     system_prompt: str = ""
     screen_padding: Tuple[int, ...] = (0, 0)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         valid_behaviors = ("restart", "freeze", "quit")
         if self.end_behavior not in valid_behaviors:
             self.end_behavior = "restart" if self.auto_restart else "freeze"
