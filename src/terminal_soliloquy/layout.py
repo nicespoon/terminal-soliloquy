@@ -92,7 +92,7 @@ def make_footer(status: str, end_behavior: Union[str, bool] = "freeze") -> Panel
     footer_text.append(" Quit  ", style="green1")
     footer_text.append(" R ", style=COLOR_KEY_BADGE)
     footer_text.append(" Restart  ", style="green1")
-    footer_text.append(" A ", style=COLOR_KEY_BADGE)
+    footer_text.append(" E ", style=COLOR_KEY_BADGE)
     footer_text.append(f" End: [{behavior_label}]  ", style="green1")
 
     status_table = Table.grid(expand=True)

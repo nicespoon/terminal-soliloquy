@@ -169,7 +169,7 @@ def _run_soliloquy():
                     elif key == "r":
                         reset_session()
                         break
-                    elif key == "a":
+                    elif key == "e":
                         end_behavior = cycle_end_behavior(end_behavior)
                         exhaustion_start = time.time()
 
@@ -224,7 +224,7 @@ def _run_soliloquy():
                     reset_session()
                     interrupted = True
                     break
-                elif key == "a":
+                elif key == "e":
                     end_behavior = cycle_end_behavior(end_behavior)
 
                 while not stream_q.empty():
@@ -235,14 +235,15 @@ def _run_soliloquy():
                         status = f"LLAMA-CPP ERROR: {str(item)[:30]}"
                     else:
                         partial, tokens, done = item
-                        status = "STREAMING"
                         if done:
+                            status = "STREAMING"
                             used_tokens = tokens
                             final_text = partial
                             history[entry_idx] = (now, escape(final_text))
                         else:
                             used_tokens = tokens
                             if partial:
+                                status = "STREAMING"
                                 safe_text = escape(partial[:-1])
                                 last_char = escape(partial[-1])
                                 history[entry_idx] = (now, f"{safe_text}[bold #000000 on bright_green]{last_char}[/]")
@@ -273,7 +274,7 @@ def _run_soliloquy():
                     elif key == "r":
                         reset_session()
                         break
-                    elif key == "a":
+                    elif key == "e":
                         end_behavior = cycle_end_behavior(end_behavior)
 
 

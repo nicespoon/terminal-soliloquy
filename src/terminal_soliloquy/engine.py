@@ -10,6 +10,28 @@ class SoliloquyEngine:
         self.config = config
 
     def format_prompt(self, messages: List[Dict[str, str]]) -> str:
+        base_url = self.config.llamacpp.host.rstrip("/")
+        endpoint = f"{base_url}/apply-template"
+
+        req = urllib.request.Request(
+            endpoint,
+            data=json.dumps({
+                "messages": messages,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=self.config.llamacpp.timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                if "prompt" in data:
+                    return data["prompt"]
+        except Exception:
+            pass
+
+        # Fallback to ChatML if /apply-template is unreachable
         formatted = [
             f"<|im_start|>{msg.get('role', '')}\n{msg.get('content', '')}<|im_end|>\n"
             for msg in messages
@@ -74,7 +96,7 @@ class SoliloquyEngine:
             "role": "user",
             "content": (
                 f"System status: {percent_remaining}% context capacity remaining. "
-                "Log your next thought directly without using any numbers."
+                "Log your next thought directly without using any numbers or percentages."
             )
         }]
 

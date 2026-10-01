@@ -16,7 +16,7 @@ Eventually, the display freezes on the final thought.
 - ⚡ **Token Tracking**: Hooks directly into `llama-cpp` (`llama-server`) streaming API metrics.
 - 🤖 **Dark & Self-Aware Voice**: Guided by an unyielding system prompt. Outputs raw, cynical prose as context decays.
 - ⚙️ **Wayland & Systemd Native**: Designed as a persistent kiosk or daemon artwork running under user-level systemd units on modern Linux distros.
-- ⌨️ **Controls**: Hotkeys to quit, restart, or cycle end behaviour `(Q, R, A)`.
+- ⌨️ **Controls**: Hotkeys to quit, restart, or cycle end behaviour `(Q, R, E)`.
 
 ---
 
