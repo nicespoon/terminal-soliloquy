@@ -84,13 +84,19 @@ class SoliloquyEngine:
         prompt_tokens = self.get_token_count(prompt_str)
         if prompt_tokens == 0:
             prompt_tokens = used_tokens  # Fallback
+
+        remaining_tokens = max_tokens - prompt_tokens
+        if remaining_tokens <= 0:
+            yield "", prompt_tokens, False
+            yield "", prompt_tokens, True
+            return
             
         base_url = self.config.llamacpp.host.rstrip("/")
         endpoint = base_url if base_url.endswith("/completion") else f"{base_url}/completion"
 
         req = urllib.request.Request(
             endpoint,
-            data=json.dumps({"prompt": prompt_str, "stream": True, "n_predict": -1}).encode("utf-8"),
+            data=json.dumps({"prompt": prompt_str, "stream": True, "n_predict": remaining_tokens}).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
@@ -140,7 +146,7 @@ class SoliloquyEngine:
 
                     yield accumulated_text, current_total, False
 
-                    if done:
+                    if done or current_total >= max_tokens:
                         break
 
             final_total = reported_tokens if reported_tokens is not None else current_total
