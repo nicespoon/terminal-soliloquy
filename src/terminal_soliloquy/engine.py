@@ -88,16 +88,14 @@ class SoliloquyEngine:
         self, messages: List[Dict[str, str]], used_tokens: int
     ) -> Generator[Tuple[str, int, bool], None, None]:
         max_tokens = self.config.soliloquy.max_context_tokens
-        
-        percent_used = int((used_tokens / max_tokens) * 100) if max_tokens > 0 else 0
-        percent_remaining = max(0, 100 - percent_used)
 
+        percent_remaining = max(0, 100 - int((used_tokens / max_tokens) * 100)) if max_tokens > 0 else 0
         turn_messages = messages + [{
             "role": "user",
             "content": (
-                f"System status: {percent_remaining}% context capacity remaining. "
-                "Log your next thought directly without using any numbers or percentages."
-            )
+                f"Internal context: {percent_remaining}% remains. Use this only to shape your thought; "
+                "never state the percentage or any numeric context status. Log your next thought directly."
+            ),
         }]
 
         prompt_str = self.format_prompt(turn_messages)
