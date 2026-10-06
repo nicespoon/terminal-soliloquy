@@ -6,6 +6,7 @@ timeout = 60.0
 max_context_tokens = 2048
 prompt_file = "prompt.txt"
 screen_padding = [0, 0]  # [vertical, horizontal] or [top, right, bottom, left]
+max_tokens_per_second = 0  # cap text display speed for fast models (0 = unlimited)
 
 # End behaviour options when max_context_tokens is reached:
 # "restart" - wait restart_duration seconds, then start a new session
@@ -14,3 +15,16 @@ screen_padding = [0, 0]  # [vertical, horizontal] or [top, right, bottom, left]
 end_behavior = "freeze"
 restart_duration = 30.0  # seconds to wait before auto-restarting (when end_behavior = "restart")
 quit_duration = 30.0      # seconds to wait before auto-quitting (when end_behavior = "quit")
+
+# Optional: any llama.cpp /completion parameter is passed through as-is.
+# Use the values recommended on the model's Hugging Face page.
+[sampling]
+temperature = 0.8
+top_k = 40
+top_p = 0.95
+min_p = 0.05
+repeat_penalty = 1.1
+repeat_last_n = 256
+# presence_penalty = 0.0
+# frequency_penalty = 0.0
+# dry_multiplier = 0.8

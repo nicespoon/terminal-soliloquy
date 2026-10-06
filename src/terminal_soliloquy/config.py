@@ -1,7 +1,7 @@
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, Tuple
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -26,6 +26,7 @@ class SoliloquyConfig:
     prompt_file: str = "prompt.txt"
     system_prompt: str = ""
     screen_padding: Tuple[int, ...] = (0, 0)
+    max_tokens_per_second: float = 0.0  # 0 = unlimited
 
     def __post_init__(self) -> None:
         valid_behaviors = ("restart", "freeze", "quit")
@@ -39,6 +40,7 @@ class SoliloquyConfig:
 class Config:
     llamacpp: LlamaCppConfig
     soliloquy: SoliloquyConfig
+    sampling: Dict[str, Any] = field(default_factory=dict)
 
 
 def load_config(config_path: str = "config.toml") -> Config:
@@ -113,6 +115,11 @@ def load_config(config_path: str = "config.toml") -> Config:
     except (TypeError, ValueError):
         quit_duration = 0.0
 
+    try:
+        max_tokens_per_second = max(0.0, float(sol_data.get("max_tokens_per_second", 0.0)))
+    except (TypeError, ValueError):
+        max_tokens_per_second = 0.0
+
     return Config(
         llamacpp=LlamaCppConfig(
             host=host,
@@ -128,5 +135,7 @@ def load_config(config_path: str = "config.toml") -> Config:
             prompt_file=prompt_file,
             system_prompt=system_prompt,
             screen_padding=screen_padding,
+            max_tokens_per_second=max_tokens_per_second,
         ),
+        sampling=dict(data.get("sampling", {})),
     )

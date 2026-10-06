@@ -67,7 +67,26 @@ restart_duration = 30.0  # seconds to wait before auto-restarting (when end_beha
 quit_duration = 0.0      # seconds to wait before auto-quitting (when end_behavior = "quit")
 prompt_file = "prompt.txt"
 screen_padding = [0, 0]  # [vertical, horizontal] or [top, right, bottom, left]
+max_tokens_per_second = 0  # cap text display speed for fast models (0 = unlimited)
 ```
+
+`max_tokens_per_second` throttles the incoming stream so text appears no faster than the given rate (e.g. `8` for a comfortable reading pace). Slow models are unaffected.
+
+#### Sampling parameters
+
+To reduce repetition in small models, add an optional `[sampling]` table. Every key is passed straight through to llama.cpp's `/completion` endpoint, so use whatever the model's Hugging Face page recommends:
+
+```toml
+[sampling]
+temperature = 0.8
+top_k = 40
+top_p = 0.95
+min_p = 0.05
+repeat_penalty = 1.1
+repeat_last_n = 256
+```
+
+`prompt`, `stream` and `n_predict` are managed by the app and ignored here. Omit the table to use the server defaults.
 
 ### 4. Run Application Manually
 

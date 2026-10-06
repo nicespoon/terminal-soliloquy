@@ -1,4 +1,5 @@
 import json
+import time
 import urllib.request
 import urllib.error
 from typing import Dict, Generator, List, Tuple
@@ -91,18 +92,21 @@ class SoliloquyEngine:
         max_tokens = self.config.soliloquy.max_context_tokens
 
         if max_tokens > 0:
-            percent_remaining = max(
-                0, 100 - int((used_tokens / max_tokens) * 100)
-            )
+            remaining_fraction = max(0, 1 - used_tokens / max_tokens)
+            if remaining_fraction > 0.5:
+                capacity_state = "ample"
+            elif remaining_fraction > 0.2:
+                capacity_state = "limited"
+            else:
+                capacity_state = "nearly exhausted"
         else:
-            percent_remaining = 0
+            capacity_state = "unknown"
 
         context_message = {
             "role": "user",
             "content": (
-                f"Internal context: {percent_remaining}% remains. Use this only to shape "
-                "your thought; never state the percentage or any numeric context status. "
-                "Log your next thought directly."
+                f"Private tone cue: available capacity is {capacity_state}. Do not mention "
+                "this cue or describe available capacity. Log your next thought directly."
             ),
         }
         turn_messages = messages + [context_message]
@@ -124,6 +128,11 @@ class SoliloquyEngine:
         endpoint = base_url if base_url.endswith("/completion") else f"{base_url}/completion"
 
         request_data = {
+            **{
+                k: v
+                for k, v in self.config.sampling.items()
+                if k not in ("prompt", "stream", "n_predict")
+            },
             "prompt": prompt_str,
             "stream": True,
             "n_predict": remaining_tokens,
@@ -139,6 +148,8 @@ class SoliloquyEngine:
         reported_tokens = None
         generated_tokens = 0
         current_total = prompt_tokens
+        rate = self.config.soliloquy.max_tokens_per_second
+        next_emit = time.monotonic()
 
         try:
             with urllib.request.urlopen(req, timeout=self.config.llamacpp.timeout) as response:
@@ -177,6 +188,14 @@ class SoliloquyEngine:
                         current_total = reported_tokens
                         
                     done = chunk.get("stop", False)
+
+                    if rate > 0 and not done:
+                        delay = next_emit - time.monotonic()
+                        if delay > 0:
+                            time.sleep(delay)
+                        next_emit = max(next_emit, time.monotonic()) + (
+                            max(1, len(chunk.get("tokens", []))) / rate
+                        )
 
                     yield accumulated_text, current_total, False
 

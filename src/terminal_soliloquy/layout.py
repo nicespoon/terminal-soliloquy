@@ -1,3 +1,4 @@
+import time
 from typing import List, Optional, Tuple, Union
 from rich import box
 from rich.console import Console
@@ -13,19 +14,23 @@ COLOR_DIM = "dim green"
 COLOR_TIMESTAMP = "bold green"
 COLOR_TEXT = "spring_green1"
 COLOR_KEY_BADGE = "bold #000000 on green1"
-COLOR_EXHAUSTION = "bold #000000 on bright_green"
+COLOR_EXHAUSTION = "bold #000000 on bright_yellow"
+CURSOR_MARK = "\x00"
+CURSOR_STYLE = "bold #000000 on bright_green"
 
 
 def make_header(used_tokens: int, max_tokens: int, model: str) -> Panel:
     pct = min(100.0, (used_tokens / max_tokens) * 100) if max_tokens > 0 else 0.0
+    exhausted = used_tokens >= max_tokens
+    progress_style = "yellow" if exhausted else "bright_green"
 
     bar = ProgressBar(
         total=max_tokens,
         completed=used_tokens,
         width=12,
         style="color(234)",
-        complete_style="bright_green",
-        finished_style="bold bright_green",
+        complete_style=progress_style,
+        finished_style=f"bold {progress_style}",
     )
 
     title_text = Text()
@@ -33,7 +38,10 @@ def make_header(used_tokens: int, max_tokens: int, model: str) -> Panel:
     title_text.append(f" {model}", style=COLOR_DIM)
 
     progress_text = Text()
-    progress_text.append(f"{used_tokens:,}/{max_tokens:,} ⏣", style="green1")
+    progress_text.append(
+        f"{used_tokens:,}/{max_tokens:,} ⏣",
+        style="yellow" if exhausted else "green1",
+    )
 
     header_table = Table.grid(expand=True, padding=(0, 1))
     header_table.add_column(justify="left", ratio=1)
@@ -41,10 +49,11 @@ def make_header(used_tokens: int, max_tokens: int, model: str) -> Panel:
     header_table.add_column(justify="right")
     header_table.add_row(title_text, progress_text, bar)
 
-    return Panel(header_table, box=box.ROUNDED, border_style="dim green", padding=(0, 1))
+    border_style = "yellow" if exhausted else "dim green"
+    return Panel(header_table, box=box.ROUNDED, border_style=border_style, padding=(0, 1))
 
 
-def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool) -> Panel:
+def make_main_table(entries: List[Tuple[str, Union[str, Text]]]) -> Panel:
     table = Table(
         box=box.SIMPLE_HEAD,
         border_style=COLOR_DIM,
@@ -63,16 +72,6 @@ def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool
             table.add_row("", "")
         table.add_row(timestamp, output)
 
-    if exhausted:
-        table.add_row(
-            "[FULL]",
-            Text(
-                " CONTEXT EXHAUSTED ",
-                style=COLOR_EXHAUSTION,
-                justify="center",
-            ),
-        )
-
     return Panel(
         table,
         border_style="green1",
@@ -81,7 +80,25 @@ def make_main_table(entries: List[Tuple[str, Union[str, Text]]], exhausted: bool
     )
 
 
-def make_footer(status: str, end_behavior: Union[str, bool] = "freeze") -> Panel:
+def make_end_panel(used_tokens: int, max_tokens: int, compact: bool) -> Panel:
+    title = Text(" CONTEXT FULL ", style=COLOR_EXHAUSTION)
+    token_count = Text(f"{used_tokens:,} / {max_tokens:,} TOKENS", style="bold yellow")
+    message = Text()
+    message.append_text(title)
+    if compact:
+        message.append("\n")
+    else:
+        message.append("  ")
+    message.append_text(token_count)
+
+    return Panel(message, box=box.ROUNDED, border_style="yellow", padding=(0, 1))
+
+
+def make_footer(
+    status: str,
+    end_behavior: Union[str, bool] = "freeze",
+    exhausted: bool = False,
+) -> Panel:
     if isinstance(end_behavior, bool):
         behavior_label = "RESTART" if end_behavior else "FREEZE"
     else:
@@ -99,8 +116,15 @@ def make_footer(status: str, end_behavior: Union[str, bool] = "freeze") -> Panel
     status_table.add_column(justify="left")
     status_table.add_column(justify="right")
 
-    status_display = Spinner("dots", text=Text(status, style=COLOR_HEADER), style="bold bright_green")
-    
+    if exhausted:
+        status_display = Text(status, style="bold yellow")
+    else:
+        status_display = Spinner(
+            "dots",
+            text=Text(status, style=COLOR_HEADER),
+            style="bold bright_green",
+        )
+
     status_table.add_row(footer_text, status_display)
 
     return Panel(status_table, box=box.ROUNDED, border_style="dim green", padding=(0, 1))
@@ -132,13 +156,15 @@ def build_layout(
 
     console = console or Console()
 
-    # Available row height accounting for header (3), footer (3), main borders (2), and table header (2)
-    available_lines = max(1, console.height - 10 - top - bottom)
-    if used_tokens >= max_tokens:
-        available_lines = max(1, available_lines - 1)
+    exhausted = used_tokens >= max_tokens
+    content_width = console.width - left - right
+    compact_end_panel = content_width < 68
+    end_panel_size = (4 if compact_end_panel else 3) if exhausted else 0
+
+    # Reserve space for header, footer, table framing, and the exhaustion panel.
+    available_lines = max(1, console.height - 10 - top - bottom - end_panel_size)
 
     # Calculate exact column width for text wrapping inside padded panels
-    content_width = console.width - left - right
     inner_panel_width = max(20, content_width - 4)
     output_col_width = max(10, inner_panel_width - 13)
 
@@ -156,12 +182,32 @@ def build_layout(
 
         lines_left -= needed_spacing
 
+        has_cursor = output.endswith(CURSOR_MARK)
+        if has_cursor:
+            output = output[: -len(CURSOR_MARK)]
+
         try:
             text_obj = Text.from_markup(output)
         except Exception:
             text_obj = Text(output)
 
         wrapped_lines = text_obj.wrap(console, output_col_width)
+
+        if has_cursor:
+            # Wrap the text alone, then place the cursor after it so it never reflows words
+            wrapped_lines = list(wrapped_lines)
+            waiting = not output.strip()
+            cursor_on = not waiting or int(time.time() * 2) % 2 == 0
+            cursor = Text(" ", style=CURSOR_STYLE if cursor_on else "")
+            last = wrapped_lines[-1] if wrapped_lines else None
+            if last is not None and last.cell_len < output_col_width:
+                last.rstrip_end(output_col_width)
+                last.append_text(cursor)
+            else:
+                wrapped_lines.append(cursor)
+            text_obj = Text("\n").join(wrapped_lines)
+            wrapped_lines = list(wrapped_lines)
+
         num_lines = max(1, len(wrapped_lines))
 
         if num_lines <= lines_left:
@@ -183,11 +229,24 @@ def build_layout(
 
     # Core layout structure
     content = Layout(name="content")
-    content.split_column(
-        Layout(make_header(used_tokens, max_tokens, model), size=3),
-        Layout(make_main_table(visible_entries, used_tokens >= max_tokens), ratio=1),
-        Layout(make_footer(status, end_behavior), size=3),
+    header = Layout(make_header(used_tokens, max_tokens, model), size=3)
+    main = Layout(make_main_table(visible_entries), ratio=1)
+    footer = Layout(
+        make_footer(status, end_behavior, exhausted=exhausted),
+        size=3,
     )
+    if exhausted:
+        content.split_column(
+            header,
+            main,
+            Layout(
+                make_end_panel(used_tokens, max_tokens, compact_end_panel),
+                size=end_panel_size,
+            ),
+            footer,
+        )
+    else:
+        content.split_column(header, main, footer)
 
     # Horizontal padding split
     if left or right:

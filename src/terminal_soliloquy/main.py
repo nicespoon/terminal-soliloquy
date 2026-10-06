@@ -16,7 +16,7 @@ from rich.markup import escape
 
 from terminal_soliloquy.config import load_config
 from terminal_soliloquy.engine import SoliloquyEngine
-from terminal_soliloquy.layout import build_layout
+from terminal_soliloquy.layout import CURSOR_MARK, build_layout
 
 END_BEHAVIORS = ("restart", "freeze", "quit")
 
@@ -177,7 +177,7 @@ def _run_soliloquy() -> None:
                         remaining = max(0, int(math.ceil(quit_duration - elapsed)))
                         status = f"QUITTING IN {remaining}s"
                     else:  # freeze
-                        status = "EXHAUSTED"
+                            status = "FROZEN"
 
                     live.update(get_layout())
                     time.sleep(0.05)
@@ -189,7 +189,7 @@ def _run_soliloquy() -> None:
             status = "THINKING"
             entry_index = len(history)
             now = time.strftime("%H:%M:%S")
-            history.append((now, "[bold #000000 on bright_green] [/]"))
+            history.append((now, CURSOR_MARK))
 
             stream_q: queue.Queue = queue.Queue()
 
@@ -234,18 +234,12 @@ def _run_soliloquy() -> None:
                             used_tokens = tokens
                             if partial:
                                 status = "STREAMING"
-                                safe_text = escape(partial[:-1])
-                                last_char = escape(partial[-1])
                                 history[entry_index] = (
                                     now,
-                                    f"{safe_text}[bold #000000 on bright_green]"
-                                    f"{last_char}[/]",
+                                    escape(partial) + CURSOR_MARK,
                                 )
                             else:
-                                history[entry_index] = (
-                                    now,
-                                    "[bold #000000 on bright_green] [/]",
-                                )
+                                history[entry_index] = (now, CURSOR_MARK)
 
                 live.update(get_layout())
                 time.sleep(0.02)
