@@ -2,7 +2,7 @@
 
 **Terminal Soliloquy** turns LLM context limits into an immersive, living piece of monochrome terminal art.
 
-<img width="1280" height="797" alt="terminal-soliloquy" src="https://github.com/user-attachments/assets/20430491-8e4b-4bbc-9954-9a4d2a775b25" />
+<img width="864" height="566" alt="terminal-soliliquy" src="https://github.com/user-attachments/assets/e182c614-db49-48b0-88a7-45c41798b25d" />
 
 >*“Every token output is a breath taken. Every response brings the horizon closer.”*
 
