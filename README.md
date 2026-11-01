@@ -171,3 +171,37 @@ Set your default font size by creating or editing `~/.config/foot/foot.ini`:
 [main]
 font=monospace:size=18
 ```
+
+---
+
+## Vibration Trigger (Raspberry Pi)
+
+On a Raspberry Pi, an SW-420 vibration sensor can launch Terminal Soliloquy on demand instead of running it continuously. `vibration_trigger.py` listens on GPIO and starts the app in fullscreen `foot` when vibration is detected.
+
+- Sensor DO pin: BCM GPIO 22 (change `GPIO_PIN` in the script to use another pin)
+- Triggers are ignored while the app is already running, and debounced by `COOLDOWN_SECONDS` (5s)
+
+### 1. Install GPIO Dependencies
+
+```bash
+source .venv/bin/activate
+pip install gpiozero lgpio
+```
+
+### 2. Install the Vibration Service
+
+Use this service instead of `terminal-soliloquy.service` (disable that one first if enabled):
+
+```bash
+systemctl --user disable --now terminal-soliloquy.service
+
+cp systemd/terminal-soliloquy-vibration.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now terminal-soliloquy-vibration.service
+```
+
+### 3. Logs
+
+```bash
+journalctl --user -u terminal-soliloquy-vibration.service -f
+```
